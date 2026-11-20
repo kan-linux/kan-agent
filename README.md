@@ -1,6 +1,6 @@
 ## Overview
 
-Kan-Agent: The native agent subsystem of Kan-Linux, powered by llama.cpp.
+Kan-Agent: The native agent subsystem of Kan-Linux, powered by local AI community.
 
 It autonomously builds, deploys, audits, rolls back and troubleshooting system components, replacing traditional package managers and app stores in traditional Linux distributions.
 
