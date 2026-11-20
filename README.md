@@ -12,6 +12,7 @@ No conventional package manager required. Local inference, reproducible builds, 
 
 ## Acknowledgements
 - Thanks to [llama.cpp](https://github.com/ggml-org/llama.cpp)
+- Thanks to [strata](https://github.com/niko1221/strata)
 - Thanks to the entire local AI community
 - Special thanks to the AI assistant for extensive technical discussions, architectural advice, and writing assistance throughout the development of Kan-Agent
 
