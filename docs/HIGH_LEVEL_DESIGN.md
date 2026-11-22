@@ -114,6 +114,8 @@ Data flow (install example): user request → Agent Runtime produces a plan → 
 2. **Permission layer integration**: Pi has no built-in permission system (upstream recommends external containerization). Kan-Agent enforces permissions **at the tool-execution boundary** — dangerous tools (deploy, rollback, patch, build) require user confirmation or policy authorization before execution; audit findings drive interception;
 3. **Inference binding**: talk to the local llama-server (ggml-hexagon) via the OpenAI-compatible API.
 
+Loop guardrail: tool-failure retries are capped (e.g. 3) to avoid dead-looping on unsolvable errors.
+
 Pi's agent loop / session core is left untouched; slimming/packaging and deep rework are out of scope for the first stage.
 
 **Ecosystem reference**: [simplexai-labs/linger](https://github.com/simplexai-labs/linger) ("bring your own runtime", which supports Pi as a runtime) and its model–harness co-design philosophy are useful long-term references.
@@ -124,6 +126,8 @@ Pi's agent loop / session core is left untouched; slimming/packaging and deep re
 
 **The first-stage performance baseline is the x86_64 pure-CPU backend** ([Discussion #4](https://github.com/kan-linux/kan-agent/discussions/4) test environment); the Vulkan backend is an optional enhancement.
 
+**Runtime baseline**: llama-server is spawned on demand as a resident process and releases model memory after an idle timeout; startup parameters are fixed to `--jinja`, a low default temperature, `--reasoning-budget 128`, and KV-cache prefix reuse (`--cache-reuse`), so the System Prompt and tool Schemas are prefilled only once.
+
 ### 4.4 Model Layer: Domain-Specific Task Model
 
 - **Base**: Gemma4-e4b (Q4_0 GGUF) — best overall in the edge model evaluation;
@@ -132,7 +136,7 @@ Pi's agent loop / session core is left untouched; slimming/packaging and deep re
 
 ### 4.5 Tool Orchestration Layer: 7 Atomic Tools
 
-Design principles: **push safety down into the tool layer rather than relying on model self-discipline**; use enum constraints to curb parameter hallucination in a 4B model; forced auditing and traceability; built-in self-repair loop.
+Design principles: **push safety down into the tool layer rather than relying on model self-discipline**; use enum constraints to curb parameter hallucination in a 4B model; forced auditing and traceability; built-in self-repair loop; budgeted tool outputs — structured trimmed results (error tail + surrounding lines) are returned while full logs are persisted for `sys_inspect`.
 
 | Tool | Responsibility | Privilege |
 |---|---|---|
@@ -151,12 +155,14 @@ Both install classes share the tool set above; pipelines are trimmed per the `so
 
 High-frequency fields (`source_type`, `build_system`, `scan_scope`, `action`, ...) strictly use enums; combined with llama.cpp `--jinja` sampling this keeps parameters valid and cuts generated token count.
 
+The complete parameter contract of the 7 tools (parameter names, types, enums, required fields) is frozen in [`docs/TOOL_SCHEMA.json`](https://github.com/kan-linux/kan-agent/blob/master/docs/TOOL_SCHEMA.json), shared by Pi integration and fine-tuning data construction.
+
 ### 4.6 System Substrate
 
 - **Sandboxed builds**: namespace/bwrap-level isolation; no network during builds (policy-releasable); writable only workspace and DESTDIR — never polluting the root filesystem;
 - **Content-addressed store**: build artifacts are written to a read-only store (Nix/OSTree-like), made effective via atomic symlink flips;
-- **Official component catalog**: analogous to the local software database of apt/dnf/rpm, but as "component description data": component name → official distribution URL pattern → default/available versions → install root (e.g. `/opt/<tool>`) → config placement steps (`ld.so.conf`, `profile.d`, symlinks, etc.). `repo_fetch` / `install_audit` use it to resolve URLs and enforce the official-source allowlist (**preventing the model from fabricating download addresses**); `sys_inspect` exposes the installable component/version list read-only; the permission layer adjudicates URL legitimacy with it. Source-class components can be added progressively (upstream repo addresses, build-system types);
-- **Snapshots and generations**: every `atomic_deploy` produces a generation; `system_rollback` switches back to a historical generation;
+- **Official component catalog**: analogous to the local software database of apt/dnf/rpm, but as "component description data": component name → official distribution URL pattern → default/available versions → install root (e.g. `/opt/<tool>`) → config placement steps (`ld.so.conf`, `profile.d`, symlinks, etc.) → dependency declarations (`dependencies`). `repo_fetch` / `install_audit` use it to resolve URLs and enforce the official-source allowlist (**preventing the model from fabricating download addresses**); `sys_inspect` exposes the installable component/version list read-only; the permission layer adjudicates URL legitimacy with it. Source-class components can be added progressively (upstream repo addresses, build-system types);
+- **Snapshots and generations**: every `atomic_deploy` produces a generation; `system_rollback` switches back to a historical generation; a generation also hosts declarative config snapshots (`ld.so.conf.d`, `profile.d`, systemd units, app policy files); rollback automatically runs `ldconfig` and systemd reload; user data/documents are out of rollback scope;
 - **Audit log**: `install_audit` verdicts and all dangerous operations are fully persisted and traceable;
 - **Permission policy**: tool-level allowlist/confirmation rules, adjudicated centrally by the Agent Runtime's permission layer.
 
@@ -176,6 +182,8 @@ user request → plan → repo_fetch → install_audit ──alert──▶ inte
                                      ▼
                               system_rollback (back to previous generation)
 ```
+
+Dependency handling: topologically sort dependency declarations from the component catalog and build in order before compiling; when configure/CMake reports a missing dependency, bounded recursive resolution is allowed (depth ≤2, missing dependencies resolved only from the component catalog), with every recursive action fully audited.
 
 ### 5.2 Official-Binary Install (e.g. Firefox, Node.js, JDK, Go, Rust, Vulkan SDK)
 

@@ -1,0 +1,213 @@
+{
+  "schema_version": "0.1.0",
+  "status": "draft",
+  "description": "Kan-Agent atomic tool contract (7 tools). Machine-readable single source of truth for Agent Runtime tool registration (customized Pi) and fine-tuning trajectory construction. Human-readable design: docs/HIGH_LEVEL_DESIGN.md / docs/HIGH_LEVEL_DESIGN.zh-CN.md, section 4.5.",
+  "principles": [
+    "Safety is enforced at the tool boundary, not by model self-discipline.",
+    "Enums are closed sets; values outside the enum are rejected at the tool boundary.",
+    "Tool outputs are budgeted: structured trimmed results (error tail + surrounding lines) are returned; full logs are persisted and retrievable via sys_inspect.",
+    "Tool-failure retries are capped (default 3) before escalating to the user."
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "repo_fetch",
+        "description": "Fetch upstream source or an official release package from a git repo / tarball URL into an isolated workspace. For source_type=binary the URL must match the official component catalog allowlist (official distribution URLs only, no third-party mirrors).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "source_type": {
+              "type": "string",
+              "enum": ["binary", "source"],
+              "description": "Install class: official binary release vs source build."
+            },
+            "component": {
+              "type": "string",
+              "description": "Component name in the official component catalog. Preferred over url: resolves URL and default version automatically."
+            },
+            "url": {
+              "type": "string",
+              "description": "Git repo or tarball URL. Used when component is absent or as an explicit override; for source_type=binary it is validated against the official-source allowlist."
+            },
+            "ref": {
+              "type": "string",
+              "description": "Git tag/branch/commit for source class, or release version for binary class. Defaults to the catalog default when omitted."
+            }
+          },
+          "required": ["source_type"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "install_audit",
+        "description": "Pre-execution security audit. For source: static behavior audit of source and build scripts (configure, Makefile, CMakeLists.txt, install scripts). For binary: official-origin allowlist and integrity verification. Read-only. High-risk findings block the pipeline and require user authorization.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "source_type": {
+              "type": "string",
+              "enum": ["binary", "source"],
+              "description": "Install class being audited."
+            },
+            "workspace": {
+              "type": "string",
+              "description": "Workspace path returned by repo_fetch."
+            },
+            "scan_scope": {
+              "type": "string",
+              "enum": ["scripts", "build_files", "origin", "integrity", "full"],
+              "description": "Audit scope. Default: full."
+            }
+          },
+          "required": ["source_type", "workspace"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "source_patch",
+        "description": "Apply patches or edit build/source files in the workspace: fix compile errors or remove hazards. Writes are restricted to the workspace.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "workspace": {
+              "type": "string",
+              "description": "Workspace path returned by repo_fetch."
+            },
+            "file_path": {
+              "type": "string",
+              "description": "Target file path relative to the workspace."
+            },
+            "action": {
+              "type": "string",
+              "enum": ["apply_diff", "replace_content", "create_file", "delete_file"],
+              "description": "Edit operation to perform on the target file."
+            },
+            "diff": {
+              "type": "string",
+              "description": "Unified diff content. Required when action=apply_diff."
+            },
+            "content": {
+              "type": "string",
+              "description": "Full new file content. Required when action=replace_content or create_file."
+            }
+          },
+          "required": ["workspace", "file_path", "action"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "sandbox_build",
+        "description": "Configure and compile source in an unprivileged isolated sandbox (namespace/chroot; no network; writable only workspace and DESTDIR). On failure, returns a budgeted log tail (error lines + surrounding context); the full log is persisted and retrievable via sys_inspect. Dependency ordering comes from catalog dependency declarations (topological sort); missing-dependency errors may trigger bounded recursive resolution (depth <= 2, catalog-only, fully audited).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "workspace": {
+              "type": "string",
+              "description": "Workspace path returned by repo_fetch."
+            },
+            "build_system": {
+              "type": "string",
+              "enum": ["make", "cmake", "meson", "cargo", "autotools", "kbuild", "other"],
+              "description": "Build system detected or chosen for this component."
+            },
+            "configure_args": {
+              "type": "string",
+              "description": "Extra configure/cmake arguments (optional). Install prefix is forced into the sandbox/versioned dir."
+            },
+            "targets": {
+              "type": "string",
+              "description": "Build targets (optional; default: all)."
+            }
+          },
+          "required": ["workspace", "build_system"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "atomic_deploy",
+        "description": "Atomically deploy build artifacts to the system store / install roots, flip symlinks, place declarative config (ld.so.conf.d, profile.d, systemd units per deploy profile) and create a new generation snapshot. Dangerous: requires confirmation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "component": {
+              "type": "string",
+              "description": "Component name (must exist in the official component catalog)."
+            },
+            "version": {
+              "type": "string",
+              "description": "Version being deployed."
+            },
+            "artifact": {
+              "type": "string",
+              "description": "Path to build output (DESTDIR) or the fetched release package."
+            },
+            "verify_cmd": {
+              "type": "string",
+              "description": "Post-deploy health-check command (optional). Executed in a constrained environment: allowlisted binaries, no shell metacharacters. Failure triggers system_rollback."
+            }
+          },
+          "required": ["component", "version", "artifact"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "system_rollback",
+        "description": "Atomically roll back component state to a historical generation: flip symlinks, restore the declarative config snapshot, run post-rollback hooks (ldconfig, systemd reload). Dangerous: requires confirmation. User data/documents are never touched.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "component": {
+              "type": "string",
+              "description": "Component name. Optional: defaults to the component of the last failed deploy."
+            },
+            "generation": {
+              "type": "string",
+              "description": "Target generation id to roll back to."
+            }
+          },
+          "required": ["generation"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "sys_inspect",
+        "description": "Read-only inspection of system environment, shared-library deps, toolchain, kernel logs, persisted build/audit logs, the official component catalog, and generation history.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": ["check_env", "check_deps", "read_log", "list_catalog", "list_generations", "inspect_file"],
+              "description": "Inspection operation to perform."
+            },
+            "target": {
+              "type": "string",
+              "description": "Path, component name, or log id depending on action (optional)."
+            }
+          },
+          "required": ["action"],
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

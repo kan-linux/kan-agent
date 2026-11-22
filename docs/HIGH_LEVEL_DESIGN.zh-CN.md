@@ -109,6 +109,8 @@ Kan-Agent 处理**两类软件安装形态**：
 2. **权限层集成**：Pi 本身不含权限系统（官方建议外部容器化解决）。Kan-Agent 在**工具执行边界**实现权限控制——高危工具（部署、回滚、补丁、构建）执行前强制用户确认或策略授权，审计结果驱动拦截；
 3. **推理对接**：通过 OpenAI 兼容 API 对接本地 llama-server（ggml-hexagon）。
 
+循环护栏：为工具失败重试设最大上限（如 3 次），防止在无法解决的错误上死循环。
+
 不改动 Pi 的 agent loop / 会话核心；裁剪打包与深度改造不在第一阶段范围。
 
 **生态参考**：[simplexai-labs/linger](https://github.com/simplexai-labs/linger) 的 "bring your own runtime"（支持 Pi 作为运行时）与 model–harness 协同设计理念可作为长期参考。
@@ -119,6 +121,8 @@ Kan-Agent 处理**两类软件安装形态**：
 
 **第一阶段性能基线为 x86_64 纯 CPU 后端**（[Discussion #4](https://github.com/kan-linux/kan-agent/discussions/4) 实测环境）；Vulkan 后端为可选增强。
 
+**运行基线**：llama-server 按需拉起为常驻进程，空闲超时自动释放模型内存；启动参数固化为 `--jinja`、低默认温度、`--reasoning-budget 128` 与 KV cache 前缀复用（`--cache-reuse`），System Prompt 与工具 Schema 仅 prefill 一次。
+
 ### 4.4 模型层：领域特定任务模型
 
 - **基座**：Gemma4-e4b（Q4_0 GGUF）——端侧模型评估综合最优；
@@ -127,7 +131,7 @@ Kan-Agent 处理**两类软件安装形态**：
 
 ### 4.5 工具编排层：7 个原子工具
 
-设计原则：**安全下沉到工具底层而非全靠模型自律**；用 enum 约束降低 4B 模型参数幻觉；强制审计与可追溯；自带自我修复闭环。
+设计原则：**安全下沉到工具底层而非全靠模型自律**；用 enum 约束降低 4B 模型参数幻觉；强制审计与可追溯；自带自我修复闭环；工具输出预算——返回结构化裁剪结果（报错尾部与错误行上下文），完整日志落盘供 `sys_inspect` 查阅。
 
 | 工具 | 职责 | 权限级别 |
 |---|---|---|
@@ -146,12 +150,14 @@ Kan-Agent 处理**两类软件安装形态**：
 
 高频字段（`source_type`、`build_system`、`scan_scope`、`action` 等）严格使用 enum，配合 llama.cpp 的 `--jinja` 采样保证参数合法并压缩生成 token 数。
 
+7 个工具的完整参数契约（参数名、类型、enum、必填项）冻结于 [`docs/TOOL_SCHEMA.json`](https://github.com/kan-linux/kan-agent/blob/master/docs/TOOL_SCHEMA.json)，供 Pi 集成与微调数据构造共同引用。
+
 ### 4.6 系统底座
 
 - **沙盒构建**：Namespace/bwrap 级隔离，构建期无网络（可按策略放开）、仅可写 workspace 与 DESTDIR，杜绝污染根目录；
 - **内容寻址存储**：构建产物写入只读 store（类 Nix/OSTree 模型），通过软链接原子切换对外生效；
-- **官方组件目录（component catalog）**：类比 apt/dnf/rpm 的本地软件数据库，但以"组件描述数据"形态存在：组件名 → 官方分发 URL 模式 → 默认/可用版本 → 安装根（如 `/opt/<tool>`）→ 配置落位步骤（`ld.so.conf`、`profile.d`、软链接等）。`repo_fetch` / `install_audit` 据此解析 URL 并校验官方来源白名单（**防模型编造下载地址**）；`sys_inspect` 只读暴露可安装组件/版本清单；权限层据此裁决 URL 合法性。源码类组件可渐进收录（上游仓库地址、构建系统类型）；
-- **快照与 generation**：每次 `atomic_deploy` 产生一个"代"，`system_rollback` 即切换回历史代；
+- **官方组件目录（component catalog）**：类比 apt/dnf/rpm 的本地软件数据库，但以"组件描述数据"形态存在：组件名 → 官方分发 URL 模式 → 默认/可用版本 → 安装根（如 `/opt/<tool>`）→ 配置落位步骤（`ld.so.conf`、`profile.d`、软链接等）→ 依赖声明（`dependencies`）。`repo_fetch` / `install_audit` 据此解析 URL 并校验官方来源白名单（**防模型编造下载地址**）；`sys_inspect` 只读暴露可安装组件/版本清单；权限层据此裁决 URL 合法性。源码类组件可渐进收录（上游仓库地址、构建系统类型）；
+- **快照与 generation**：每次 `atomic_deploy` 产生一个"代"，`system_rollback` 即切换回历史代；generation 同时托管声明式配置快照（`ld.so.conf.d`、`profile.d`、systemd 单元、应用策略文件），回滚后自动执行 `ldconfig` 与 systemd reload；用户数据/文档不在回滚范围；
 - **审计日志**：`install_audit` 结论与所有高危操作全量落盘，可追溯；
 - **权限策略**：工具级别的 allowlist/确认规则，由 Agent Runtime 的权限层统一裁决。
 
@@ -171,6 +177,8 @@ Kan-Agent 处理**两类软件安装形态**：
                                      ▼
                               system_rollback（回到上一代）
 ```
+
+依赖处理：构建前按组件目录的依赖声明拓扑排序、按序构建；configure/CMake 报缺失依赖时允许受限递归解析（深度 ≤2，缺失依赖仅从组件目录解析），递归动作全量进审计日志。
 
 ### 5.2 官方二进制安装（如 Firefox、Node.js、JDK、Go、Rust、Vulkan SDK）
 
