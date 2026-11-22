@@ -19,6 +19,7 @@ No conventional package manager required. Local inference, reproducible builds, 
 |---|---|
 | Kan-Agent High Level Design (Chinese) | [HIGH_LEVEL_DESIGN.zh-CN.md](docs/HIGH_LEVEL_DESIGN.zh-CN.md) |
 | Kan-Agent High Level Design (English) | [HIGH_LEVEL_DESIGN.md](docs/HIGH_LEVEL_DESIGN.md) |
+| Kan-Agent Tool Schema | [TOOL_SCHEMA.json](docs/TOOL_SCHEMA.json) |
 
 
 ## Acknowledgements
