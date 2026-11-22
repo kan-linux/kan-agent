@@ -13,9 +13,16 @@ A core feature of **Kan-Linux is the absence of traditional package managers (ap
 No conventional package manager required. Local inference, reproducible builds, fine-grained permission control, safe rollback.
 
 
+## Docs
+
+| Document | Link |
+|---|---|
+| Kan-Agent High Level Design (Chinese) | [HIGH_LEVEL_DESIGN.zh-CN.md](docs/HIGH_LEVEL_DESIGN.zh-CN.md) |
+| Kan-Agent High Level Design (English) | [HIGH_LEVEL_DESIGN.md](docs/HIGH_LEVEL_DESIGN.md) |
+
+
 ## Acknowledgements
 - Thanks to [llama.cpp](https://github.com/ggml-org/llama.cpp)
-- Thanks to [strata](https://github.com/niko1221/strata)
 - Thanks to [Pi](https://github.com/earendil-works/pi)
 - Thanks to the entire local AI community
 - Special thanks to the AI assistant for extensive technical discussions, architectural advice, and writing assistance throughout the development of Kan-Agent
