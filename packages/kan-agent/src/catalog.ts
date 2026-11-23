@@ -7,7 +7,7 @@
  * path. Mirrors and CDN redirectors are not catalog data; `origin` must be "official".
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -58,12 +58,17 @@ export class CatalogError extends Error {
 	}
 }
 
-function defaultCatalogPath(): string {
-	// src/catalog.ts -> packages/kan-agent/config/component-catalog.json. For a Bun binary the
-	// catalog ships next to the executable; PI_KAN_CATALOG overrides for both.
-	const override = process.env.PI_KAN_CATALOG;
-	if (override) return override;
-	return join(dirname(fileURLToPath(import.meta.url)), "..", "config", "component-catalog.json");
+function defaultCatalogPath(): string | undefined {
+	// The catalog is data, not code: it ships as a file so it can be updated without recompiling
+	// (which is the direction of the design's runtime-queryable data file). Candidates cover each
+	// run shape — a Bun binary has no real filesystem at import.meta.url (it is /$bunfs/...), so
+	// the compiled form resolves the file shipped next to the executable by copy-binary-assets.
+	const candidates = [
+		process.env.PI_KAN_CATALOG,
+		join(dirname(process.execPath), "config", "component-catalog.json"),
+		join(dirname(fileURLToPath(import.meta.url)), "..", "config", "component-catalog.json"),
+	].filter((p): p is string => p !== undefined);
+	return candidates.find((p) => existsSync(p));
 }
 
 /** The in-memory catalog. */
@@ -86,7 +91,14 @@ export class ComponentCatalog {
 		}
 	}
 
-	static load(path: string = defaultCatalogPath()): ComponentCatalog {
+	static load(path: string | undefined = defaultCatalogPath()): ComponentCatalog {
+		if (path === undefined) {
+			throw new CatalogError(
+				"catalog_unreadable",
+				"component catalog not found. Set PI_KAN_CATALOG to its path, or ship config/component-catalog.json next to the executable.",
+			);
+		}
+		let file: CatalogFile;
 		let raw: string;
 		try {
 			raw = readFileSync(path, "utf8");
@@ -96,7 +108,6 @@ export class ComponentCatalog {
 				`cannot read component catalog at ${path}: ${(e as Error).message}`,
 			);
 		}
-		let file: CatalogFile;
 		try {
 			file = JSON.parse(raw) as CatalogFile;
 		} catch (e) {
