@@ -199,8 +199,11 @@ export function commitToStore(paths: KanPaths, component: string, version: strin
 	return destination;
 }
 
-/** Recursively restore write permission so a read-only store tree can be replaced. */
-function makeWritable(dir: string): void {
+/**
+ * Recursively restore write permission so a read-only store tree can be replaced or deleted.
+ * Anything that removes store content needs this: the store is read-only by construction.
+ */
+export function makeWritable(dir: string): void {
 	chmodSync(dir, 0o755);
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const path = join(dir, entry.name);

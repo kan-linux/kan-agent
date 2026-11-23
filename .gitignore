@@ -28,6 +28,7 @@ packages/ai/src/providers/.model-generation-*/
 .npm/
 coverage/
 .nyc_output/
+packages/*/test/.tmp/
 .pi_config/
 tui-debug.log
 compaction-results/
