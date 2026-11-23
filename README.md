@@ -29,5 +29,18 @@ No conventional package manager required. Local inference, reproducible builds, 
 - Special thanks to the AI assistant for extensive technical discussions, architectural advice, and writing assistance throughout the development of Kan-Agent
 
 
+
+## Branches
+
+- master
+  https://github.com/kan-linux/kan-agent/tree/master, track [upstream pi project](https://github.com/earendil-works/pi).
+
+- kan-agent
+  https://github.com/kan-linux/kan-agent/tree/kan-agent, the default branch
+
+- backup
+  [https://github.com/kan-linux/kan-agent/tree/backup](https://github.com/kan-linux/kan-agent/tree/backup), backup branch
+
+
 ## Trademarks
 This project may include trademarks or logos belonging to third parties. Use of any third-party trademarks is governed by their respective policies.
