@@ -10,7 +10,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { ComponentCatalog } from "./catalog.ts";
-import { type FetchArgs, type AuditArgs, installAuditBinary, repoFetchBinary } from "./pipeline-binary.ts";
+import { type AuditArgs, type FetchArgs, installAuditBinary, repoFetchBinary } from "./pipeline-binary.ts";
 
 const sourceType = Type.Union([Type.Literal("binary"), Type.Literal("source")], {
 	description: "Install class: official binary release vs source build.",
@@ -146,7 +146,10 @@ const sysInspectParams = Type.Object(
 				Type.Literal("list_generations"),
 				Type.Literal("inspect_file"),
 			],
-			{ description: "Inspection operation to perform. Use list_catalog to see installable components and their source_type." },
+			{
+				description:
+					"Inspection operation to perform. Use list_catalog to see installable components and their source_type.",
+			},
 		),
 		target: Type.Optional(
 			Type.String({ description: "Path, component name, or log id depending on action (optional)." }),
@@ -277,7 +280,14 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 			async execute(_toolCallId, params: SysInspectParams) {
 				if (params.action === "list_catalog") {
 					return {
-						content: [{ type: "text", text: ["STATUS: OK", "step: sys_inspect", "action: list_catalog", catalog.describe()].join("\n") }],
+						content: [
+							{
+								type: "text",
+								text: ["STATUS: OK", "step: sys_inspect", "action: list_catalog", catalog.describe()].join(
+									"\n",
+								),
+							},
+						],
 						details: { status: "ok", tool: "sys_inspect", action: "list_catalog", components: catalog.names() },
 					};
 				}

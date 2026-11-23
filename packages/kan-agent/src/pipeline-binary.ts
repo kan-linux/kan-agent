@@ -13,7 +13,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { CatalogError, ComponentCatalog, type ResolvedSource } from "./catalog.ts";
+import type { CatalogError, ComponentCatalog, ResolvedSource } from "./catalog.ts";
 import { fetchToFile } from "./fetch.ts";
 
 export type PipelineOutcome =
@@ -38,7 +38,11 @@ export interface AuditArgs {
  * optionally the version (`ref`); the catalog resolves the URL. A caller URL is refused for the
  * binary class because the allowlist is the whole point of the trust anchor.
  */
-export async function repoFetchBinary(args: FetchArgs, workspaceRoot: string, catalog: ComponentCatalog): Promise<PipelineOutcome> {
+export async function repoFetchBinary(
+	args: FetchArgs,
+	workspaceRoot: string,
+	catalog: ComponentCatalog,
+): Promise<PipelineOutcome> {
 	if (!args.component) {
 		return {
 			kind: "error",
@@ -50,7 +54,12 @@ export async function repoFetchBinary(args: FetchArgs, workspaceRoot: string, ca
 		return {
 			kind: "error",
 			text: `STATUS: REJECTED\nstep: repo_fetch\noutcome: source_type=binary does not accept a caller-supplied url. The download address is resolved from the official component catalog entry for "${args.component}".`,
-			details: { status: "rejected", reason: "url_not_acceptable_for_binary", component: args.component, url: args.url },
+			details: {
+				status: "rejected",
+				reason: "url_not_acceptable_for_binary",
+				component: args.component,
+				url: args.url,
+			},
 		};
 	}
 
@@ -142,7 +151,9 @@ export async function installAuditBinary(args: AuditArgs, catalog: ComponentCata
 		if (resolved.sha256) {
 			checks.push(`integrity: sha256 pinned in catalog (${resolved.sha256.slice(0, 16)}...)`);
 		} else {
-			checks.push("integrity: no sha256 in catalog; trust rests on the official-source allowlist and human audit of this entry");
+			checks.push(
+				"integrity: no sha256 in catalog; trust rests on the official-source allowlist and human audit of this entry",
+			);
 		}
 	}
 

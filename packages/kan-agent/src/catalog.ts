@@ -77,7 +77,10 @@ export class ComponentCatalog {
 				throw new CatalogError("duplicate_component", `duplicate catalog component: ${entry.name}`);
 			}
 			if (entry.origin !== "official") {
-				throw new CatalogError("origin_not_official", `${entry.name}: origin must be "official", got ${entry.origin}`);
+				throw new CatalogError(
+					"origin_not_official",
+					`${entry.name}: origin must be "official", got ${entry.origin}`,
+				);
 			}
 			this.byName.set(entry.name, entry);
 		}
@@ -88,7 +91,10 @@ export class ComponentCatalog {
 		try {
 			raw = readFileSync(path, "utf8");
 		} catch (e) {
-			throw new CatalogError("catalog_unreadable", `cannot read component catalog at ${path}: ${(e as Error).message}`);
+			throw new CatalogError(
+				"catalog_unreadable",
+				`cannot read component catalog at ${path}: ${(e as Error).message}`,
+			);
 		}
 		let file: CatalogFile;
 		try {
@@ -120,7 +126,10 @@ export class ComponentCatalog {
 		const entry = this.byName.get(name);
 		if (!entry) {
 			const known = this.names().join(", ") || "(catalog is empty)";
-			throw new CatalogError("unknown_component", `component "${name}" is not in the official component catalog. Known: ${known}`);
+			throw new CatalogError(
+				"unknown_component",
+				`component "${name}" is not in the official component catalog. Known: ${known}`,
+			);
 		}
 		const picked = version ?? entry.default_version;
 		if (!entry.versions.includes(picked)) {

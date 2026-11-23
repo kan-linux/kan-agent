@@ -12,9 +12,7 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { rename, rm, stat } from "node:fs/promises";
 
-export type FetchOutcome =
-	| { kind: "fetched"; bytes: number; sha256: string }
-	| { kind: "failed"; reason: string };
+export type FetchOutcome = { kind: "fetched"; bytes: number; sha256: string } | { kind: "failed"; reason: string };
 
 export interface FetchOptions {
 	/** How many attempts before giving up (install-prebuilts.sh uses 3). */
