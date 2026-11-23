@@ -8,12 +8,10 @@
  * `MainOptions.extensionFactories` is filled in.
  */
 
-import { type InlineExtension, main, type MainOptions } from "@earendil-works/pi-coding-agent";
+import { type InlineExtension, type MainOptions, main } from "@earendil-works/pi-coding-agent";
 import kanAgentExtension from "./extension.ts";
 
-const extensionFactories: InlineExtension[] = [
-	{ name: "kan-agent", factory: kanAgentExtension, builtin: true },
-];
+const extensionFactories: InlineExtension[] = [{ name: "kan-agent", factory: kanAgentExtension, builtin: true }];
 
 const options: MainOptions = { extensionFactories };
 main(process.argv.slice(2), options);
