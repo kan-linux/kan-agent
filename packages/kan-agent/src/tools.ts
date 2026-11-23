@@ -10,7 +10,10 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { ComponentCatalog } from "./catalog.ts";
+import { atomicDeployBinary, systemRollback } from "./deploy.ts";
 import { type AuditArgs, type FetchArgs, installAuditBinary, repoFetchBinary } from "./pipeline-binary.ts";
+import { resolveKanPaths } from "./root.ts";
+import { GenerationStore } from "./store.ts";
 
 const sourceType = Type.Union([Type.Literal("binary"), Type.Literal("source")], {
 	description: "Install class: official binary release vs source build.",
@@ -191,17 +194,10 @@ function placeholder(toolName: string, params: unknown) {
 	};
 }
 
-/**
- * Isolated workspace root for fetched artifacts (HLD §4.5: repo_fetch writes an isolated workspace).
- * Overridable for tests so a run never touches the live system.
- */
-function workspaceRoot(): string {
-	return process.env.PI_KAN_WORKSPACE ?? "/tmp/kan-agent-workspace";
-}
-
 /** The 7 Kan-Agent atomic tools. Order matches docs/TOOL_SCHEMA.json. */
 export function createKanAgentTools(): ToolDefinition<any, any>[] {
 	const catalog = ComponentCatalog.load();
+	const paths = resolveKanPaths();
 	return [
 		{
 			name: "repo_fetch",
@@ -211,7 +207,7 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 			parameters: repoFetchParams,
 			async execute(_toolCallId, params: RepoFetchParams) {
 				if (params.source_type === "binary") {
-					const outcome = await repoFetchBinary(params as FetchArgs, workspaceRoot(), catalog);
+					const outcome = await repoFetchBinary(params as FetchArgs, paths, catalog);
 					return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
 				}
 				return placeholder("repo_fetch", params);
@@ -258,7 +254,17 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 				"Atomically deploy build artifacts to the system store / install roots, flip symlinks, place declarative config (ld.so.conf.d, profile.d, systemd units per deploy profile) and create a new generation snapshot. Dangerous: requires confirmation.",
 			parameters: atomicDeployParams,
 			async execute(_toolCallId, params: AtomicDeployParams) {
-				return placeholder("atomic_deploy", params);
+				const outcome = await atomicDeployBinary(
+					{
+						component: params.component,
+						version: params.version,
+						artifact: params.artifact,
+						verify_cmd: params.verify_cmd,
+					},
+					paths,
+					catalog,
+				);
+				return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
 			},
 		},
 		{
@@ -268,7 +274,12 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 				"Atomically roll back component state to a historical generation: flip symlinks, restore the declarative config snapshot, run post-rollback hooks (ldconfig, systemd reload). Dangerous: requires confirmation. User data/documents are never touched.",
 			parameters: systemRollbackParams,
 			async execute(_toolCallId, params: SystemRollbackParams) {
-				return placeholder("system_rollback", params);
+				const outcome = systemRollback(
+					{ component: params.component, generation: params.generation },
+					paths,
+					catalog,
+				);
+				return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
 			},
 		},
 		{
@@ -289,6 +300,35 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 							},
 						],
 						details: { status: "ok", tool: "sys_inspect", action: "list_catalog", components: catalog.names() },
+					};
+				}
+				if (params.action === "list_generations") {
+					const generations = new GenerationStore(paths);
+					const component = params.target;
+					const records = component
+						? generations.list(component)
+						: catalog.names().flatMap((n) => generations.list(n));
+					const current = component ? generations.current(component) : undefined;
+					const body =
+						records.length === 0
+							? "(no generations recorded)"
+							: records
+									.map(
+										(r) =>
+											`- gen ${r.generation} ${r.component} ${r.version} at ${r.created_at}` +
+											`${current?.generation === r.generation ? " (current)" : ""}` +
+											`${r.rolled_back_from !== undefined ? ` (rollback from gen ${r.rolled_back_from})` : ""}` +
+											`\n    install_root: ${r.install_root} -> ${r.store_path}`,
+									)
+									.join("\n");
+					return {
+						content: [
+							{
+								type: "text",
+								text: ["STATUS: OK", "step: sys_inspect", "action: list_generations", body].join("\n"),
+							},
+						],
+						details: { status: "ok", tool: "sys_inspect", action: "list_generations", generations: records },
 					};
 				}
 				return placeholder("sys_inspect", params);

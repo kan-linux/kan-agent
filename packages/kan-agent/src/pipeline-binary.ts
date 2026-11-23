@@ -15,6 +15,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CatalogError, ComponentCatalog, ResolvedSource } from "./catalog.ts";
 import { fetchToFile } from "./fetch.ts";
+import type { KanPaths } from "./root.ts";
 
 export type PipelineOutcome =
 	| { kind: "ok"; text: string; details: Record<string, unknown> }
@@ -34,13 +35,13 @@ export interface AuditArgs {
 }
 
 /**
- * Fetch an official prebuilt into `<workspaceRoot>/<component>/`. The model names the component and
- * optionally the version (`ref`); the catalog resolves the URL. A caller URL is refused for the
- * binary class because the allowlist is the whole point of the trust anchor.
+ * Fetch an official prebuilt into `<root>/var/lib/kan-agent/workspace/<component>/`. The model names
+ * the component and optionally the version (`ref`); the catalog resolves the URL. A caller URL is
+ * refused for the binary class because the allowlist is the whole point of the trust anchor.
  */
 export async function repoFetchBinary(
 	args: FetchArgs,
-	workspaceRoot: string,
+	paths: KanPaths,
 	catalog: ComponentCatalog,
 ): Promise<PipelineOutcome> {
 	if (!args.component) {
@@ -75,7 +76,7 @@ export async function repoFetchBinary(
 		};
 	}
 
-	const workspace = join(workspaceRoot, resolved.name);
+	const workspace = join(paths.workspaceDir, resolved.name);
 	await mkdir(workspace, { recursive: true });
 	const dest = join(workspace, resolved.tarball);
 
