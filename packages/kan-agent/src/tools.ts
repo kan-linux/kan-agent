@@ -164,16 +164,25 @@ type SysInspectParams = Static<typeof sysInspectParams>;
 /**
  * Result returned by every M2 placeholder execute. Reports the arguments the tool boundary
  * validated and admits no work was done, so a skeleton run can never look like a real deploy.
+ *
+ * The STATUS line is deliberate: the model must be able to tell at a glance that the step did not
+ * happen, and must not have to infer it from prose. A bare "accepted" reads like a success.
  */
 function placeholder(toolName: string, params: unknown) {
 	return {
 		content: [
 			{
 				type: "text" as const,
-				text: `[skeleton] ${toolName} accepted its arguments but is not implemented yet at M2.\narguments: ${JSON.stringify(params)}`,
+				text: [
+					"STATUS: NOT_IMPLEMENTED",
+					`step: ${toolName}`,
+					"outcome: no action was taken on the system. This tool is an M2 skeleton stub.",
+					`validated_arguments: ${JSON.stringify(params)}`,
+					"Do not report this step as completed. Report it as not implemented.",
+				].join("\n"),
 			},
 		],
-		details: { skeleton: true, tool: toolName, params },
+		details: { skeleton: true, status: "not_implemented", tool: toolName, params },
 	};
 }
 
