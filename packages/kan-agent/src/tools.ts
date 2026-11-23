@@ -9,6 +9,8 @@
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
+import { ComponentCatalog } from "./catalog.ts";
+import { type FetchArgs, type AuditArgs, installAuditBinary, repoFetchBinary } from "./pipeline-binary.ts";
 
 const sourceType = Type.Union([Type.Literal("binary"), Type.Literal("source")], {
 	description: "Install class: official binary release vs source build.",
@@ -144,7 +146,7 @@ const sysInspectParams = Type.Object(
 				Type.Literal("list_generations"),
 				Type.Literal("inspect_file"),
 			],
-			{ description: "Inspection operation to perform." },
+			{ description: "Inspection operation to perform. Use list_catalog to see installable components and their source_type." },
 		),
 		target: Type.Optional(
 			Type.String({ description: "Path, component name, or log id depending on action (optional)." }),
@@ -186,16 +188,29 @@ function placeholder(toolName: string, params: unknown) {
 	};
 }
 
+/**
+ * Isolated workspace root for fetched artifacts (HLD §4.5: repo_fetch writes an isolated workspace).
+ * Overridable for tests so a run never touches the live system.
+ */
+function workspaceRoot(): string {
+	return process.env.PI_KAN_WORKSPACE ?? "/tmp/kan-agent-workspace";
+}
+
 /** The 7 Kan-Agent atomic tools. Order matches docs/TOOL_SCHEMA.json. */
 export function createKanAgentTools(): ToolDefinition<any, any>[] {
+	const catalog = ComponentCatalog.load();
 	return [
 		{
 			name: "repo_fetch",
 			label: "repo_fetch",
 			description:
-				"Fetch upstream source or an official release package from a git repo / tarball URL into an isolated workspace. For source_type=binary the URL must match the official component catalog allowlist (official distribution URLs only, no third-party mirrors).",
+				"Fetch upstream source or an official release package from a git repo / tarball URL into an isolated workspace. For source_type=binary the URL must match the official component catalog allowlist (official distribution URLs only, no third-party mirrors). If you do not know a component's source_type, run sys_inspect with action=list_catalog first.",
 			parameters: repoFetchParams,
 			async execute(_toolCallId, params: RepoFetchParams) {
+				if (params.source_type === "binary") {
+					const outcome = await repoFetchBinary(params as FetchArgs, workspaceRoot(), catalog);
+					return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
+				}
 				return placeholder("repo_fetch", params);
 			},
 		},
@@ -206,6 +221,10 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 				"Pre-execution security audit. For source: static behavior audit of source and build scripts (configure, Makefile, CMakeLists.txt, install scripts). For binary: official-origin allowlist and integrity verification. Read-only. High-risk findings block the pipeline and require user authorization.",
 			parameters: installAuditParams,
 			async execute(_toolCallId, params: InstallAuditParams) {
+				if (params.source_type === "binary") {
+					const outcome = await installAuditBinary(params as AuditArgs, catalog);
+					return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
+				}
 				return placeholder("install_audit", params);
 			},
 		},
@@ -253,9 +272,15 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 			name: "sys_inspect",
 			label: "sys_inspect",
 			description:
-				"Read-only inspection of system environment, shared-library deps, toolchain, kernel logs, persisted build/audit logs, the official component catalog, and generation history.",
+				"Read-only inspection of system environment, shared-library deps, toolchain, kernel logs, persisted build/audit logs, the official component catalog, and generation history. Use action=list_catalog to list installable components and their source_type before installing; there is no catalog_lookup action.",
 			parameters: sysInspectParams,
 			async execute(_toolCallId, params: SysInspectParams) {
+				if (params.action === "list_catalog") {
+					return {
+						content: [{ type: "text", text: ["STATUS: OK", "step: sys_inspect", "action: list_catalog", catalog.describe()].join("\n") }],
+						details: { status: "ok", tool: "sys_inspect", action: "list_catalog", components: catalog.names() },
+					};
+				}
 				return placeholder("sys_inspect", params);
 			},
 		},

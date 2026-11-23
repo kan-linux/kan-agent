@@ -1,0 +1,32 @@
+{
+  "schema_version": "0.1.0",
+  "status": "draft",
+  "description": "Kan-Agent official component catalog (HLD §4.6). Substrate data, not a tool: the single source of truth for official distribution URLs, versions, install roots and config placement. repo_fetch/install_audit resolve URLs from here and reject anything not in it (anti-URL-fabrication); sys_inspect lists installable components/versions read-only; the permission layer adjudicates URL legality from here. NOT derived from kan-linux's build system: that system runs at OS-build time against a rootfs being assembled, while this catalog describes installs on an already-installed user machine.",
+  "principles": [
+    "origin is mandatory and must be \"official\": third-party mirrors, CDN redirectors and auto-generated source snapshots are not catalog data.",
+    "url_pattern and versions are separate fields so a version bump changes only the version list, never the URL shape.",
+    "sha256 is optional: when absent, trust rests on the official-source allowlist plus human audit of the entry, not on a checksum. install_audit verifies a hash only when the entry carries one.",
+    "install_root is per source_type: binary class installs under /opt/<tool> (self-contained trees), source class deploys into /usr via the content-addressed store + symlink flip.",
+    "The model supplies only component and version. The catalog resolves everything else; a model-supplied URL is never accepted for source_type=binary."
+  ],
+  "components": [
+    {
+      "name": "go",
+      "description": "Go toolchain (official prebuilt distribution).",
+      "source_type": "binary",
+      "origin": "official",
+      "tarball_pattern": "go{version}.linux-amd64.tar.gz",
+      "url_pattern": "https://go.dev/dl/{tarball}",
+      "versions": ["1.27.4", "1.27.3", "1.27.2"],
+      "default_version": "1.27.4",
+      "install_root": "/opt/go",
+      "extract_root": "/opt",
+      "verify_cmd": "go version",
+      "config_placement": [],
+      "dependencies": [],
+      "sha256": {
+        "1.27.4": "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840"
+      }
+    }
+  ]
+}
