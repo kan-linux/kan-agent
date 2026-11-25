@@ -48,3 +48,6 @@ plans/
 collect.sh
 packages/agent/docs/extensions/pi-server-artifact/index.md
 google-ai-qa.txt
+install-prebuilts.sh
+llm
+*.gguf

@@ -87,12 +87,14 @@ function writeTestCatalog(dir: string, hashOverride?: Record<string, string>): s
 		description: "Tool-layer e2e fixture component.",
 		source_type: "binary",
 		origin: "official",
+		image_class: "optional",
 		tarball_pattern: `${COMPONENT}-{version}.tar.gz`,
 		url_pattern: `${baseUrl}/{tarball}`,
 		versions: VERSIONS.map((v) => v.version),
 		default_version: VERSIONS[0].version,
 		install_root: `/opt/${COMPONENT}`,
 		extract_root: "/opt",
+		extract: { kind: "tar_topdir" },
 		verify_cmd: `${COMPONENT} --version`,
 		config_placement: [],
 		dependencies: [],
@@ -103,7 +105,11 @@ function writeTestCatalog(dir: string, hashOverride?: Record<string, string>): s
 			),
 	};
 	const path = join(dir, "catalog.json");
-	writeFileSync(path, JSON.stringify({ schema_version: "0.1.0", components: [entry] }, null, 2), "utf8");
+	writeFileSync(
+		path,
+		JSON.stringify({ schema_version: "0.2.0", free_space_preflight_mb: 0, components: [entry] }, null, 2),
+		"utf8",
+	);
 	return path;
 }
 
@@ -232,14 +238,14 @@ describe("binary install pipeline", () => {
 		);
 		expect(new GenerationStore(paths).current(COMPONENT)?.generation).toBe(2);
 
-		const rolled = systemRollback({ component: COMPONENT, generation: "1" }, paths, catalog);
+		const rolled = await systemRollback({ component: COMPONENT, generation: "1" }, paths, catalog);
 		expect(rolled.kind).toBe("ok");
 		expect(new GenerationStore(paths).current(COMPONENT)?.generation).toBe(1);
 		expect(readlinkSync(paths.installRoot(COMPONENT))).toContain("1.0.0");
 	});
 
-	it("rejects a rollback to a generation that does not exist", () => {
-		const outcome = systemRollback({ component: COMPONENT, generation: "42" }, paths, catalog);
+	it("rejects a rollback to a generation that does not exist", async () => {
+		const outcome = await systemRollback({ component: COMPONENT, generation: "42" }, paths, catalog);
 		expect(outcome.kind).toBe("error");
 		expect(outcome.text).toContain("does not exist");
 	});

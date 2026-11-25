@@ -1,32 +1,253 @@
 {
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "status": "draft",
-  "description": "Kan-Agent official component catalog (HLD §4.6). Substrate data, not a tool: the single source of truth for official distribution URLs, versions, install roots and config placement. repo_fetch/install_audit resolve URLs from here and reject anything not in it (anti-URL-fabrication); sys_inspect lists installable components/versions read-only; the permission layer adjudicates URL legality from here. NOT derived from kan-linux's build system: that system runs at OS-build time against a rootfs being assembled, while this catalog describes installs on an already-installed user machine.",
+  "description": "Kan-Agent official component catalog (HLD §4.6). Substrate data, not a tool: the single source of truth for official distribution URLs, versions, install roots and config placement. repo_fetch/install_audit resolve URLs from here and reject anything not in it (anti-URL-fabrication); sys_inspect lists installable components/versions read-only; the permission layer adjudicates URL legality from here. NOT derived from kan-linux's build system: that system runs at OS-build time against a rootfs being assembled, while this catalog describes installs on an already-installed user machine. Absorbs install-prebuilts.sh: its 8 components, version constants, URL patterns, /opt roots, extract layouts and setup_*_config placement live here as data.",
   "principles": [
     "origin is mandatory and must be \"official\": third-party mirrors, CDN redirectors and auto-generated source snapshots are not catalog data.",
     "url_pattern and versions are separate fields so a version bump changes only the version list, never the URL shape.",
     "sha256 is optional: when absent, trust rests on the official-source allowlist plus human audit of the entry, not on a checksum. install_audit verifies a hash only when the entry carries one.",
     "install_root is per source_type: binary class installs under /opt/<tool> (self-contained trees), source class deploys into /usr via the content-addressed store + symlink flip.",
-    "The model supplies only component and version. The catalog resolves everything else; a model-supplied URL is never accepted for source_type=binary."
+    "The model supplies only component and version. The catalog resolves everything else; a model-supplied URL is never accepted for source_type=binary.",
+    "image_class carries the install-prebuilts.sh split: in-image components ship with the OS and are updated in place, optional components are installed on demand.",
+    "deploy_profile carries each component's setup_*_config placement as data; atomic_deploy executes it and snapshots system files for rollback.",
+    "free_space_preflight_mb is the substrate disk preflight (about 10G, matching install-prebuilts.sh): enforced before fetch and before deploy."
   ],
+  "free_space_preflight_mb": 10240,
   "components": [
     {
       "name": "go",
       "description": "Go toolchain (official prebuilt distribution).",
       "source_type": "binary",
       "origin": "official",
+      "image_class": "optional",
       "tarball_pattern": "go{version}.linux-amd64.tar.gz",
       "url_pattern": "https://go.dev/dl/{tarball}",
       "versions": ["1.27.4", "1.27.3", "1.27.2"],
       "default_version": "1.27.4",
       "install_root": "/opt/go",
       "extract_root": "/opt",
-      "verify_cmd": "go version",
+      "extract": { "kind": "tar_topdir" },
+      "version_prefixes": ["go"],
+      "verify_cmd": "bin/go version",
       "config_placement": [],
       "dependencies": [],
       "sha256": {
         "1.27.4": "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840"
       }
+    },
+    {
+      "name": "rust",
+      "description": "Rust combined standalone toolchain (rustc + cargo + rust-std; not rustup).",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "optional",
+      "tarball_pattern": "rust-{version}-x86_64-unknown-linux-gnu.tar.xz",
+      "url_pattern": "https://static.rust-lang.org/dist/{tarball}",
+      "versions": ["1.100.0", "1.99.1"],
+      "default_version": "1.100.0",
+      "install_root": "/opt/rust",
+      "extract_root": "/opt/rust",
+      "extract": { "kind": "tar_strip", "strip": 1 },
+      "fixups": [{ "kind": "rust_std_merge" }],
+      "version_prefixes": ["rust-"],
+      "verify_cmd": "rustc/bin/rustc --version",
+      "verify_exists": ["cargo/bin/cargo"],
+      "config_placement": ["rust-std merged into the rustc sysroot (rustc cannot find std otherwise)"],
+      "dependencies": []
+    },
+    {
+      "name": "firefox",
+      "description": "Firefox web browser (official Mozilla tarball) with Kan-Linux policies and defaults.",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "in-image",
+      "tarball_pattern": "firefox-{version}.tar.xz",
+      "url_pattern": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/{version}/linux-x86_64/en-US/{tarball}",
+      "versions": ["160.0.1"],
+      "default_version": "160.0.1",
+      "install_root": "/opt/firefox",
+      "extract_root": "/opt",
+      "extract": { "kind": "tar_topdir" },
+      "version_prefixes": ["firefox-"],
+      "verify_cmd": "firefox --version",
+      "config_placement": [
+        "/etc/ld.so.conf.d/firefox.conf (dynamic linker search path)",
+        "gmp-widevinecdm/1.0 (Widevine CDM, when preinstalled at /usr/lib/cdm/widevine)",
+        "distribution/policies.json (English UI, telemetry off)",
+        "defaults/pref/kanlinux-prefs.js (VM-aware defaults)"
+      ],
+      "deploy_profile": {
+        "in_tree": [
+          {
+            "kind": "copy_file",
+            "from": "/usr/lib/cdm/widevine/manifest.json",
+            "to": "gmp-widevinecdm/1.0/manifest.json",
+            "optional": true
+          },
+          {
+            "kind": "copy_file",
+            "from": "/usr/lib/cdm/widevine/libwidevinecdm.so",
+            "to": "gmp-widevinecdm/1.0/libwidevinecdm.so",
+            "optional": true
+          },
+          {
+            "kind": "file",
+            "path": "distribution/policies.json",
+            "content": "{\n  \"policies\": {\n    \"RequestedLocales\": [\"en-US\"],\n    \"DisableTelemetry\": true,\n    \"DisableFirefoxStudies\": true,\n    \"DisablePocket\": true\n  }\n}\n"
+          },
+          {
+            "kind": "file",
+            "path": "defaults/pref/kanlinux-prefs.js",
+            "content": "// Kan-Linux Firefox defaults\npref(\"browser.startup.homepage_override.mstone\", \"ignore\");\npref(\"browser.shell.checkDefaultBrowser\", false);\npref(\"datareporting.policy.dataSubmissionEnabled\", false);\npref(\"toolkit.telemetry.reportingpolicy.firstRun\", false);\npref(\"media.eme.enabled\", true);\npref(\"media.widevine.enabled\", true);\npref(\"media.gmp-widevinecdm.enabled\", true);\npref(\"media.gmp-widevinecdm.visible\", true);\npref(\"media.gmp-widevinecdm.autoupdate\", true);\npref(\"media.gmp-widevinecdm.version\", \"1.0\");\n",
+            "vm_append": "// VM-specific (QEMU etc.): A/V playback breaks without these\npref(\"webgl.disabled\", true);\npref(\"layers.acceleration.disabled\", true);\npref(\"media.hardware-video-decoding.enabled\", false);\npref(\"gfx.webrender.all\", false);\n"
+          }
+        ],
+        "system": [
+          { "kind": "file", "path": "/etc/ld.so.conf.d/firefox.conf", "content": "/opt/firefox\n" },
+          { "kind": "hook", "hook": "ldconfig" }
+        ]
+      },
+      "dependencies": []
+    },
+    {
+      "name": "mimocode",
+      "description": "MiMoCode agent CLI (official GitHub release binary; build picked by CPU flag).",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "in-image",
+      "tarball_pattern": "mimocode-{target}.tar.gz",
+      "url_pattern": "https://github.com/XiaomiMiMo/MiMo-Code/releases/download/v{version}/{tarball}",
+      "versions": ["0.1.17"],
+      "default_version": "0.1.17",
+      "install_root": "/opt/mimocode",
+      "extract_root": "/opt/mimocode/bin",
+      "extract": { "kind": "tar_single_file", "target": "bin/mimo" },
+      "target_probe": {
+        "kind": "cpu_flag",
+        "flag": "avx2",
+        "if_present": "linux-x64",
+        "if_absent": "linux-x64-baseline"
+      },
+      "version_prefixes": ["mimocode-", "v"],
+      "verify_cmd": "bin/mimo --version",
+      "config_placement": ["/usr/local/bin/mimo (launcher symlink)"],
+      "deploy_profile": {
+        "in_tree": [],
+        "system": [{ "kind": "symlink", "from": "bin/mimo", "to": "/usr/local/bin/mimo" }]
+      },
+      "dependencies": []
+    },
+    {
+      "name": "vulkan",
+      "description": "LunarG Vulkan SDK (official prebuilt SDK tree).",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "optional",
+      "tarball_pattern": "vulkansdk-linux-x86_64-{version}.tar.xz",
+      "url_pattern": "https://sdk.lunarg.com/sdk/download/{version}/linux/{tarball}",
+      "versions": ["1.4.304.1"],
+      "default_version": "1.4.304.1",
+      "install_root": "/opt/vulkan",
+      "extract_root": "/opt/vulkan",
+      "extract": { "kind": "tar_subdir", "subdir": "{version}/x86_64" },
+      "version_prefixes": ["vulkan-", "vulkansdk-", "v"],
+      "verify_exists": ["bin/vulkaninfo"],
+      "config_placement": [],
+      "dependencies": []
+    },
+    {
+      "name": "jdk",
+      "description": "Oracle JDK (official prebuilt distribution) with JAVA_HOME and PATH placement.",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "in-image",
+      "tarball_pattern": "jdk-{version}_linux-x64_bin.tar.gz",
+      "url_pattern": "https://download.oracle.com/java/27/archive/{tarball}",
+      "versions": ["27.0.1.0.3"],
+      "default_version": "27.0.1.0.3",
+      "install_root": "/opt/jdk",
+      "extract_root": "/opt/jdk",
+      "extract": { "kind": "tar_strip", "strip": 1 },
+      "version_prefixes": ["jdk-"],
+      "verify_cmd": "bin/java -version",
+      "config_placement": [
+        "/usr/local/bin/* (PATH entries ahead of /usr/bin)",
+        "/etc/profile.d/jdk.sh (JAVA_HOME)"
+      ],
+      "deploy_profile": {
+        "in_tree": [],
+        "system": [
+          { "kind": "symlink_dir_files", "from": "bin", "to": "/usr/local/bin" },
+          {
+            "kind": "file",
+            "path": "/etc/profile.d/jdk.sh",
+            "content": "export JAVA_HOME=\"${JAVA_HOME:-/opt/jdk}\"\n"
+          }
+        ]
+      },
+      "dependencies": []
+    },
+    {
+      "name": "node",
+      "description": "Node.js official prebuilt distribution with bin tools on /usr/local/bin.",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "in-image",
+      "tarball_pattern": "node-v{version}-linux-x64.tar.xz",
+      "url_pattern": "https://nodejs.org/dist/v{version}/{tarball}",
+      "versions": ["26.13.1"],
+      "default_version": "26.13.1",
+      "install_root": "/opt/node",
+      "extract_root": "/opt/node",
+      "extract": { "kind": "tar_strip", "strip": 1 },
+      "version_prefixes": ["node-", "v"],
+      "verify_cmd": "bin/node --version",
+      "config_placement": ["/usr/local/bin/{node,npm,npx,corepack} (PATH entries)"],
+      "deploy_profile": {
+        "in_tree": [],
+        "system": [{ "kind": "symlink_dir_files", "from": "bin", "to": "/usr/local/bin" }]
+      },
+      "dependencies": []
+    },
+    {
+      "name": "libreoffice",
+      "description": "LibreOffice basic AppImage (official LibreItalia build); draw/base/startcenter/impress menu entries are dropped because they fail to start in this build.",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "optional",
+      "tarball_pattern": "LibreOffice-{version}.basic-x86_64.AppImage",
+      "url_pattern": "https://appimages.libreitalia.org/{tarball}",
+      "versions": ["26.8.3.1"],
+      "default_version": "26.8.3.1",
+      "install_root": "/opt/libreoffice",
+      "extract_root": "/opt",
+      "extract": { "kind": "appimage", "tree_glob": "opt/libreoffice*", "usr_dir": "usr" },
+      "version_prefixes": ["libreoffice-"],
+      "verify_exists": ["program"],
+      "config_placement": [
+        "/usr/share/applications (desktop entries; draw/base/startcenter/impress dropped)",
+        "/usr/share (icons, mime data from the AppImage)",
+        "updated desktop/mime databases"
+      ],
+      "deploy_profile": {
+        "in_tree": [],
+        "system": [
+          { "kind": "copy_tree", "from": "usr", "to": "/usr" },
+          {
+            "kind": "delete_matching",
+            "dir": "/usr/share/applications",
+            "patterns": [
+              "libreoffice*-draw.desktop",
+              "libreoffice*-base.desktop",
+              "libreoffice*-startcenter.desktop",
+              "libreoffice*-impress.desktop"
+            ]
+          },
+          { "kind": "hook", "hook": "update_desktop_database" },
+          { "kind": "hook", "hook": "update_mime_database" }
+        ]
+      },
+      "dependencies": []
     }
   ]
 }

@@ -21,7 +21,9 @@ const DEPLOYED_MARKER = "marker-from-deployed-binary";
 
 let root: string;
 let paths: KanPaths;
-const catalog = ComponentCatalog.load();
+// The shipped catalog pins a ~10G preflight for real installs; tests deploy into a staging root
+// and state their own (zero) requirement instead of asserting the developer's free disk.
+const catalog = new ComponentCatalog(ComponentCatalog.load().entries(), { free_space_preflight_mb: 0 });
 
 beforeEach(() => {
 	root = makeStagingRoot(base, "deploy-test");
@@ -143,26 +145,26 @@ describe("systemRollback", () => {
 		);
 		expect(new GenerationStore(paths).current("go")?.generation).toBe(2);
 
-		const outcome = systemRollback({ component: "go", generation: "1" }, paths, catalog);
+		const outcome = await systemRollback({ component: "go", generation: "1" }, paths, catalog);
 		expect(outcome.kind).toBe("ok");
 		expect(new GenerationStore(paths).current("go")?.generation).toBe(1);
 		expect(readlinkSync(paths.installRoot("go"))).toContain("1.27.4");
 	});
 
-	it("rejects a generation that does not exist", () => {
-		const outcome = systemRollback({ component: "go", generation: "99" }, paths, catalog);
+	it("rejects a generation that does not exist", async () => {
+		const outcome = await systemRollback({ component: "go", generation: "99" }, paths, catalog);
 		expect(outcome.kind).toBe("error");
 		expect(outcome.text).toContain("does not exist");
 	});
 
-	it("rejects a non-numeric generation", () => {
-		const outcome = systemRollback({ component: "go", generation: "latest" }, paths, catalog);
+	it("rejects a non-numeric generation", async () => {
+		const outcome = await systemRollback({ component: "go", generation: "latest" }, paths, catalog);
 		expect(outcome.kind).toBe("error");
 		expect(outcome.text).toContain("positive integer");
 	});
 
-	it("needs a component and has no failure to default to", () => {
-		const outcome = systemRollback({ generation: "1" }, paths, catalog);
+	it("needs a component and has no failure to default to", async () => {
+		const outcome = await systemRollback({ generation: "1" }, paths, catalog);
 		expect(outcome.kind).toBe("error");
 		expect(outcome.text).toContain("no recorded failed deploy");
 	});
@@ -185,7 +187,7 @@ describe("systemRollback", () => {
 		);
 		expect(failed.kind).toBe("error");
 
-		const rolled = systemRollback({ generation: "1" }, paths, catalog);
+		const rolled = await systemRollback({ generation: "1" }, paths, catalog);
 		expect(rolled.kind).toBe("ok");
 		expect(rolled.text).toContain("component: go");
 	});

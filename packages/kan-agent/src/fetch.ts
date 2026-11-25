@@ -19,10 +19,13 @@ export interface FetchOptions {
 	attempts?: number;
 	/** Expected sha256. When present a mismatch fails the fetch. */
 	sha256?: string;
+	/** Abort the attempt when no bytes flow for this long (install-prebuilts.sh: --timeout 30). */
+	idleTimeoutMs?: number;
 	signal?: AbortSignal;
 }
 
 const DEFAULT_ATTEMPTS = 3;
+const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
 
 /** Download `url` to `dest`, never leaving a partial file at `dest`. */
 export async function fetchToFile(url: string, dest: string, options: FetchOptions = {}): Promise<FetchOutcome> {
@@ -33,7 +36,7 @@ export async function fetchToFile(url: string, dest: string, options: FetchOptio
 	for (let attempt = 1; attempt <= attempts; attempt++) {
 		if (options.signal?.aborted) return { kind: "failed", reason: "aborted" };
 		await rm(part, { force: true });
-		const result = await attemptOnce(url, part, options.signal);
+		const result = await attemptOnce(url, part, options);
 		if (result.kind === "ok") {
 			const size = (await stat(part)).size;
 			if (size === 0) {
@@ -57,8 +60,20 @@ export async function fetchToFile(url: string, dest: string, options: FetchOptio
 
 type AttemptOutcome = { kind: "ok" } | { kind: "error"; reason: string };
 
-async function attemptOnce(url: string, part: string, signal?: AbortSignal): Promise<AttemptOutcome> {
+async function attemptOnce(url: string, part: string, options: FetchOptions): Promise<AttemptOutcome> {
+	const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+	// A stalled link must fail the attempt (and let the retry happen) instead of hanging the
+	// whole run: the watchdog aborts when no bytes flow for idleTimeoutMs, covering both the
+	// connect phase and a mid-transfer stall.
+	const watchdog = new AbortController();
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	const resetIdle = (): void => {
+		if (idleTimer !== undefined) clearTimeout(idleTimer);
+		idleTimer = setTimeout(() => watchdog.abort(), idleTimeoutMs);
+	};
+	const signal = options.signal ? AbortSignal.any([options.signal, watchdog.signal]) : watchdog.signal;
 	try {
+		resetIdle();
 		const response = await fetch(url, { redirect: "follow", signal });
 		if (!response.ok || !response.body) {
 			return { kind: "error", reason: `HTTP ${response.status} for ${url}` };
@@ -69,6 +84,7 @@ async function attemptOnce(url: string, part: string, signal?: AbortSignal): Pro
 			for (;;) {
 				const { done, value } = await reader.read();
 				if (done) break;
+				resetIdle();
 				await new Promise<void>((resolve, reject) => {
 					sink.write(value, (err) => (err ? reject(err) : resolve()));
 				});
@@ -78,7 +94,12 @@ async function attemptOnce(url: string, part: string, signal?: AbortSignal): Pro
 		}
 		return { kind: "ok" };
 	} catch (e) {
-		return { kind: "error", reason: (e as Error).message };
+		const reason = watchdog.signal.aborted
+			? `download stalled (no data for ${idleTimeoutMs}ms): ${url}`
+			: (e as Error).message;
+		return { kind: "error", reason };
+	} finally {
+		if (idleTimer !== undefined) clearTimeout(idleTimer);
 	}
 }
 

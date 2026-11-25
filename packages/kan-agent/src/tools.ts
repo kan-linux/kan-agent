@@ -274,7 +274,7 @@ export function createKanAgentTools(): ToolDefinition<any, any>[] {
 				"Atomically roll back component state to a historical generation: flip symlinks, restore the declarative config snapshot, run post-rollback hooks (ldconfig, systemd reload). Dangerous: requires confirmation. User data/documents are never touched.",
 			parameters: systemRollbackParams,
 			async execute(_toolCallId, params: SystemRollbackParams) {
-				const outcome = systemRollback(
+				const outcome = await systemRollback(
 					{ component: params.component, generation: params.generation },
 					paths,
 					catalog,

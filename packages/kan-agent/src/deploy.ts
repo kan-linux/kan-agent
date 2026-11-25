@@ -1,22 +1,32 @@
 /**
  * atomic_deploy and system_rollback (HLD §4.5).
  *
- * Deploy is: stage -> commit to the read-only store -> record a generation -> flip the /opt symlink
- * -> health check. Every step is either atomic or recorded, so a failure leaves a recoverable state
- * and rollback is a symlink flip, not a file restore. This is what replaces install-prebuilts.sh's
- * `replace_dir` (delete-then-install), which the design deprecates because it cannot roll back.
+ * Deploy is: stage -> extract -> place in-tree config -> commit to the read-only store -> record a
+ * generation -> flip the /opt symlink -> place system config -> health check. Every step is either
+ * atomic or recorded, so a failure leaves a recoverable state and rollback is a symlink flip plus a
+ * config restore, not a file restore. This is what replaces install-prebuilts.sh's `replace_dir`
+ * (delete-then-install), which the design deprecates because it cannot roll back.
  *
  * These tools are high-risk and are confirmation-gated by the permission layer; nothing here runs
  * without that gate having passed.
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { ComponentCatalog } from "./catalog.ts";
-import { assertSafeToRemove, type KanPaths } from "./root.ts";
-import { commitToStore, flipSymlink, GenerationStore } from "./store.ts";
+import { extractArtifact } from "./extract.ts";
+import {
+	applyInTreeProfile,
+	captureSystemConfig,
+	detectVm,
+	restoreConfigState,
+	runHooks,
+	writeSystemConfig,
+} from "./profile.ts";
+import { assertSafeToRemove, checkFreeSpace, type KanPaths, requireRootForLiveRoot } from "./root.ts";
+import { commitToStore, flipSymlink, type GenerationRecord, GenerationStore, makeWritable } from "./store.ts";
 
 const run = promisify(execFile);
 
@@ -55,17 +65,23 @@ export interface RollbackArgs {
 	generation: string;
 }
 
+/** Environment overrides for tests that need a fixed VM verdict; production uses detection. */
+export interface DeployOptions {
+	vm?: boolean;
+}
+
 /**
  * Deploy an official prebuilt into the store and make it reachable at /opt/<component>.
  *
- * `artifact` is the fetched tarball from repo_fetch. Its single top-level directory becomes the
- * store entry, so the store path holds the tool's own bin/, lib/, ... and /opt/<tool> points at it —
- * the same layout install-prebuilts.sh produced by extracting straight into /opt.
+ * `artifact` is the fetched package from repo_fetch. The catalog's extract spec turns it into the
+ * tool tree (the same layout install-prebuilts.sh produced by extracting straight into /opt), the
+ * deploy profile places its config, and the store + generation make the result revertible.
  */
 export async function atomicDeployBinary(
 	args: DeployArgs,
 	paths: KanPaths,
 	catalog: ComponentCatalog,
+	options?: DeployOptions,
 ): Promise<DeployOutcome> {
 	const entry = catalog.get(args.component);
 	if (!entry) {
@@ -76,29 +92,43 @@ export async function atomicDeployBinary(
 			`catalog entry "${args.component}" is source_type=${entry.source_type}; this deploy path is for binary`,
 		);
 	}
-	if (!entry.versions.includes(args.version)) {
-		return reject(
-			`${args.component}: version "${args.version}" is not in the catalog. Available: ${entry.versions.join(", ")}`,
-		);
+	let version: string;
+	try {
+		version = catalog.resolve(args.component, args.version).version;
+	} catch (e) {
+		return reject((e as Error).message);
 	}
 	if (!existsSync(args.artifact)) {
 		return reject(`artifact not found: ${args.artifact}`);
 	}
+	const rootError = requireRootForLiveRoot(paths);
+	if (rootError) return reject(rootError);
+	const space = checkFreeSpace(paths, catalog.freeSpacePreflightMb);
+	if (space.kind === "failed") return reject(space.reason);
 
-	const staging = join(paths.workspaceDir, ".staging", `${args.component}-${args.version}-${process.pid}`);
+	const staging = join(paths.workspaceDir, ".staging", `${args.component}-${version}-${process.pid}`);
 	assertSafeToRemove(paths, dirname(staging));
 	rmSync(staging, { recursive: true, force: true });
 	mkdirSync(staging, { recursive: true });
 
-	try {
-		await run("tar", ["-xf", args.artifact, "-C", staging]);
-	} catch (e) {
+	const extracted = await extractArtifact(entry, args.artifact, staging, version);
+	if (extracted.kind === "error") {
+		assertSafeToRemove(paths, staging);
 		rmSync(staging, { recursive: true, force: true });
-		return reject(`could not extract ${args.artifact}: ${(e as Error).message}`);
+		return reject(extracted.reason);
 	}
 
-	const contentDir = singleChildDir(staging) ?? staging;
-	const storePath = commitToStore(paths, args.component, args.version, contentDir);
+	const vm = options?.vm ?? detectVm();
+	const profileNotes: string[] = [];
+	try {
+		profileNotes.push(...applyInTreeProfile(entry, extracted.contentDir, paths, vm).notes);
+	} catch (e) {
+		assertSafeToRemove(paths, staging);
+		rmSync(staging, { recursive: true, force: true });
+		return reject((e as Error).message);
+	}
+
+	const storePath = commitToStore(paths, args.component, version, extracted.contentDir);
 	rmSync(staging, { recursive: true, force: true });
 	// commitToStore moved contentDir out; drop the now-empty staging shell.
 	assertSafeToRemove(paths, staging);
@@ -107,26 +137,54 @@ export async function atomicDeployBinary(
 	const installRoot = paths.installRoot(args.component);
 	const generations = new GenerationStore(paths);
 	const verifyCmd = args.verify_cmd ?? entry.verify_cmd;
+	const placement = captureSystemConfig(entry, paths, storePath);
 
-	const record = generations.advance(
-		args.component,
-		{
-			component: args.component,
-			version: args.version,
-			store_path: storePath,
-			install_root: installRoot,
-			config_placement: entry.config_placement,
-			verify_cmd: verifyCmd,
-			sha256: entry.sha256?.[args.version],
-		},
-		flipSymlink,
-	);
+	let record: GenerationRecord;
+	try {
+		record = generations.advance(
+			args.component,
+			{
+				component: args.component,
+				version,
+				store_path: storePath,
+				install_root: installRoot,
+				config_placement: entry.config_placement,
+				verify_cmd: verifyCmd,
+				sha256: entry.sha256?.[version],
+				config_undo: placement.configUndo,
+				hooks: placement.hooks,
+			},
+			(store, root) => {
+				displaceLegacyInstallRoot(paths, root);
+				flipSymlink(store, root);
+				profileNotes.push(...writeSystemConfig(entry, paths, root, vm));
+			},
+		);
+	} catch (e) {
+		// The record was written before the flip callback ran; undo this deploy's config writes
+		// so a half-applied profile cannot leak into the live system.
+		const written = generations.list(args.component).at(-1);
+		if (written) {
+			restoreConfigState(paths, generations, args.component, written.generation - 1, written.generation);
+		}
+		return reject(`deploy failed: ${(e as Error).message}`);
+	}
 
-	const verify = verifyCmd ? await runVerify(verifyCmd, installRoot) : { output: "(no verify_cmd)", passed: true };
+	const hookOutcomes = await runHooks(placement.hooks, paths);
+
+	const verify = verifyCmd
+		? await runVerify(verifyCmd, installRoot)
+		: {
+				output: verifyExists(entry.verify_exists ?? [], installRoot),
+				passed: verifyExistsPassed(entry.verify_exists ?? [], installRoot),
+			};
 	if (!verify.passed) {
 		const parent = record.parent_generation;
 		let rolledBack = false;
 		recordLastFailure(paths, args.component, record.generation);
+		// Undo this deploy's config writes either way; with a parent, flip the tree back too.
+		const hooks = restoreConfigState(paths, generations, args.component, record.generation - 1, record.generation);
+		await runHooks(hooks, paths);
 		if (parent !== undefined) {
 			generations.rollbackTo(args.component, parent, flipSymlink);
 			rolledBack = true;
@@ -137,17 +195,18 @@ export async function atomicDeployBinary(
 				"STATUS: FAILED",
 				"step: atomic_deploy",
 				`component: ${args.component}`,
-				`version: ${args.version}`,
+				`version: ${version}`,
 				`store_path: ${storePath}`,
-				`verify_cmd: ${verifyCmd}`,
+				`verify_cmd: ${verifyCmd ?? "(verify_exists)"}`,
 				`verify_output: ${verify.output}`,
+				"action: config writes of this deploy were rolled back",
 				rolledBack ? `action: rolled back to generation ${parent}` : "action: no parent generation to roll back to",
 			].join("\n"),
 			details: {
 				status: "failed",
 				reason: "verify_failed",
 				component: args.component,
-				version: args.version,
+				version,
 				generation: record.generation,
 				verify_output: verify.output,
 				rolled_back_to: rolledBack ? parent : null,
@@ -161,18 +220,22 @@ export async function atomicDeployBinary(
 			"STATUS: OK",
 			"step: atomic_deploy",
 			`component: ${args.component}`,
-			`version: ${args.version}`,
+			`version: ${version}`,
 			`generation: ${record.generation}`,
 			`store_path: ${storePath}`,
 			`install_root: ${installRoot} -> ${storePath}`,
-			`verify_cmd: ${verifyCmd ?? "(none)"}`,
+			...extracted.notes.map((n) => `extract: ${n}`),
+			...profileNotes.map((n) => `profile: ${n}`),
+			...placement.notes.map((n) => `profile: ${n}`),
+			...hookOutcomes.map((n) => `hook: ${n}`),
+			`verify_cmd: ${verifyCmd ?? "(verify_exists)"}`,
 			`verify_output: ${verify.output}`,
 		].join("\n"),
 		details: {
 			status: "ok",
 			tool: "atomic_deploy",
 			component: args.component,
-			version: args.version,
+			version,
 			generation: record.generation,
 			store_path: storePath,
 			install_root: installRoot,
@@ -182,10 +245,15 @@ export async function atomicDeployBinary(
 }
 
 /**
- * Roll a component back to a historical generation: flip /opt/<tool> to that generation's store
- * path and re-point `current`. The rollback is itself atomic and lands in the generation log.
+ * Roll a component back to a historical generation: restore the system config of the writes made
+ * after that generation, flip /opt/<tool> to its store path, and re-point `current`. The rollback
+ * is itself atomic and lands in the generation log.
  */
-export function systemRollback(args: RollbackArgs, paths: KanPaths, catalog: ComponentCatalog): DeployOutcome {
+export async function systemRollback(
+	args: RollbackArgs,
+	paths: KanPaths,
+	catalog: ComponentCatalog,
+): Promise<DeployOutcome> {
 	const generation = Number(args.generation);
 	if (!Number.isInteger(generation) || generation < 1) {
 		return reject(`generation must be a positive integer, got "${args.generation}"`);
@@ -209,6 +277,19 @@ export function systemRollback(args: RollbackArgs, paths: KanPaths, catalog: Com
 	}
 
 	const from = generations.current(component);
+	const notes: string[] = [];
+	let hooks: string[] = [];
+	if (from !== undefined && from.generation > generation) {
+		// Backward rollback restores the config pre-images of every generation after the target.
+		const restored = restoreConfigState(paths, generations, component, generation, from.generation);
+		hooks = await runHooks(restored, paths);
+		notes.push(`config: restored to generation ${generation} state`);
+	} else if (from !== undefined && from.generation < generation) {
+		// Rolling forward across generations flips the tree; system config of the newer
+		// generation is not reconstructed (its post-images are not recorded) and stays as-is.
+		notes.push("config: left as-is (roll-forward; config restore is for backward rollback)");
+	}
+
 	generations.rollbackTo(component, generation, flipSymlink);
 	return {
 		kind: "ok",
@@ -219,6 +300,8 @@ export function systemRollback(args: RollbackArgs, paths: KanPaths, catalog: Com
 			`from_generation: ${from?.generation ?? "(none)"}`,
 			`to_generation: ${generation}`,
 			`install_root: ${target.install_root} -> ${target.store_path}`,
+			...notes,
+			...hooks.map((h) => `hook: ${h}`),
 		].join("\n"),
 		details: {
 			status: "ok",
@@ -235,9 +318,9 @@ export function systemRollback(args: RollbackArgs, paths: KanPaths, catalog: Com
  * Run a deploy health check. The design constrains this: allowlisted binaries, no shell
  * metacharacters. So the command is split on whitespace and executed without a shell.
  *
- * The binary is resolved to the deployed install root and must be there. Falling back to a host
- * binary on PATH would silently health-check the wrong program — a passed verify that proves
- * nothing is worse than a failed one.
+ * The binary is resolved inside the deployed install root — `bin/<name>`, then `<name>` at the tree
+ * root (firefox lives there). Falling back to a host binary on PATH would silently health-check
+ * the wrong program — a passed verify that proves nothing is worse than a failed one.
  */
 async function runVerify(verifyCmd: string, installRoot: string): Promise<{ output: string; passed: boolean }> {
 	const forbidden = /[;&|`$(){}<>*?~\n\\]/;
@@ -246,14 +329,10 @@ async function runVerify(verifyCmd: string, installRoot: string): Promise<{ outp
 	}
 	const tokens = verifyCmd.split(/\s+/).filter(Boolean);
 	if (tokens.length === 0) return { output: "verify_cmd is empty", passed: false };
-	const binary = tokens[0];
-	if (binary.includes("/")) {
-		return { output: `verify_cmd rejected: binary must be a bare name (allowlisted), got ${binary}`, passed: false };
-	}
-	const deployed = join(installRoot, "bin", binary);
-	if (!existsSync(deployed)) {
+	const deployed = resolveVerifyBinary(tokens[0], installRoot);
+	if (!deployed) {
 		return {
-			output: `verify_cmd rejected: ${binary} is not in the deployed install root (${join(installRoot, "bin")})`,
+			output: `verify_cmd rejected: ${tokens[0]} is not in the deployed install root (${installRoot})`,
 			passed: false,
 		};
 	}
@@ -267,13 +346,42 @@ async function runVerify(verifyCmd: string, installRoot: string): Promise<{ outp
 	}
 }
 
-/** The single directory inside `dir`, if there is exactly one and it is a directory. */
-function singleChildDir(dir: string): string | undefined {
-	const entries = readdirSync(dir, { withFileTypes: true });
-	if (entries.length !== 1) return undefined;
-	const only = entries[0];
-	if (!only.isDirectory()) return undefined;
-	return join(dir, only.name);
+/** A verify binary inside the install root: a slash path as-is, a bare name in bin/ then at the root. */
+function resolveVerifyBinary(binary: string, installRoot: string): string | undefined {
+	const candidates = binary.includes("/")
+		? [join(installRoot, binary)]
+		: [join(installRoot, "bin", binary), join(installRoot, binary)];
+	return candidates.find((c) => existsSync(c));
+}
+
+function verifyExists(paths: string[], installRoot: string): string {
+	if (paths.length === 0) return "(no verify step)";
+	return paths.map((p) => `${p}: ${existsSync(join(installRoot, p)) ? "present" : "MISSING"}`).join("; ");
+}
+
+function verifyExistsPassed(paths: string[], installRoot: string): boolean {
+	return paths.every((p) => existsSync(join(installRoot, p)));
+}
+
+/**
+ * A leftover real directory at /opt/<tool> (an install-prebuilts.sh install) cannot be rename'd
+ * over by the symlink flip. The new content is already safe in the store at this point, so the
+ * stale tree goes — that is the adoption path from script installs to store installs.
+ */
+function displaceLegacyInstallRoot(paths: KanPaths, installRoot: string): void {
+	if (!existsSync(installRoot) && !isSymlink(installRoot)) return;
+	if (isSymlink(installRoot)) return;
+	assertSafeToRemove(paths, installRoot);
+	makeWritable(installRoot);
+	rmSync(installRoot, { recursive: true, force: true });
+}
+
+function isSymlink(path: string): boolean {
+	try {
+		return lstatSync(path).isSymbolicLink();
+	} catch {
+		return false;
+	}
 }
 
 function reject(reason: string): DeployOutcome {

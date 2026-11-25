@@ -15,7 +15,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CatalogError, ComponentCatalog, ResolvedSource } from "./catalog.ts";
 import { fetchToFile } from "./fetch.ts";
-import type { KanPaths } from "./root.ts";
+import { checkFreeSpace, type KanPaths, requireRootForLiveRoot } from "./root.ts";
 
 export type PipelineOutcome =
 	| { kind: "ok"; text: string; details: Record<string, unknown> }
@@ -61,6 +61,23 @@ export async function repoFetchBinary(
 				component: args.component,
 				url: args.url,
 			},
+		};
+	}
+
+	const rootError = requireRootForLiveRoot(paths);
+	if (rootError) {
+		return {
+			kind: "error",
+			text: `STATUS: REJECTED\nstep: repo_fetch\noutcome: ${rootError}`,
+			details: { status: "rejected", reason: "root_required" },
+		};
+	}
+	const space = checkFreeSpace(paths, catalog.freeSpacePreflightMb);
+	if (space.kind === "failed") {
+		return {
+			kind: "error",
+			text: `STATUS: REJECTED\nstep: repo_fetch\noutcome: ${space.reason}`,
+			details: { status: "rejected", reason: "insufficient_disk_space" },
 		};
 	}
 

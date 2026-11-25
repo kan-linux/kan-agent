@@ -15,7 +15,8 @@
  * state directory and the /opt symlink change after a deploy.
  */
 
-import { join, resolve, sep } from "node:path";
+import { existsSync, statfsSync, statSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 
 export class UnsafePathError extends Error {}
 
@@ -34,15 +35,17 @@ export class KanPaths {
 
 	constructor(root: string) {
 		this.root = root === "/" ? "" : root.replace(/\/+$/, "");
-		this.stateDir = join(this.root, "var", "lib", "kan-agent");
-		this.workspaceDir = join(this.stateDir, "workspace");
-		this.storeDir = join(this.stateDir, "store");
-		this.generationsDir = join(this.stateDir, "generations");
+		// Leading-slash segments keep join() absolute under an empty root ("" would make it
+		// cwd-relative, i.e. wrong for the live filesystem).
+		this.stateDir = join(this.root, "/var", "/lib", "/kan-agent");
+		this.workspaceDir = join(this.stateDir, "/workspace");
+		this.storeDir = join(this.stateDir, "/store");
+		this.generationsDir = join(this.stateDir, "/generations");
 	}
 
 	/** <root>/opt/<component> — where the deployed tool is reachable. */
 	installRoot(component: string): string {
-		return join(this.root, "opt", component);
+		return join(this.root, "/opt", component);
 	}
 
 	/** <root>/var/lib/kan-agent/store/<component>/<version> */
@@ -114,5 +117,68 @@ export function assertSafeToRemove(paths: KanPaths, target: string): void {
 	const underOpt = normalized.startsWith(`${join(paths.root, "opt")}${sep}`);
 	if (!insideState && !underOpt) {
 		throw new UnsafePathError(`safe_rm_rf: refusing path outside allowlist: ${target}`);
+	}
+}
+
+/** Free-space preflight verdict (install-prebuilts.sh: about 10G on the /opt filesystem). */
+export type FreeSpaceCheck = { kind: "ok"; availMb: number } | { kind: "failed"; reason: string };
+
+/**
+ * Substrate disk preflight (HLD §9: install-prebuilts.sh's require_free_space becomes a shared
+ * primitive). Checked on the filesystem that will hold the installs: the /opt directory, or its
+ * nearest existing ancestor when /opt is not there yet (a staging root under test).
+ */
+export function checkFreeSpace(paths: KanPaths, needMb: number): FreeSpaceCheck {
+	const dir = nearestExisting(join(paths.root, "opt"));
+	try {
+		const fs = statfsSync(dir);
+		const availMb = Math.floor((fs.bavail * fs.bsize) / (1024 * 1024));
+		if (availMb < needMb) {
+			return {
+				kind: "failed",
+				reason: `not enough free disk space on ${dir}: ${availMb} MiB free, need about ${needMb} MiB`,
+			};
+		}
+		return { kind: "ok", availMb };
+	} catch (e) {
+		return { kind: "failed", reason: `cannot determine free disk space for ${dir}: ${(e as Error).message}` };
+	}
+}
+
+/**
+ * Install-prebuilts.sh requires root to install. A live root (no PI_KAN_ROOT prefix) is a real
+ * system, so writes to /opt and /etc need root; a staging root is a directory the user already
+ * owns and runs unprivileged.
+ */
+export function requireRootForLiveRoot(paths: KanPaths): string | undefined {
+	if (paths.root !== "") return undefined;
+	if (typeof process.getuid === "function" && process.getuid() !== 0) {
+		return "must run as root to deploy to the live filesystem (e.g. sudo kan-agent ...)";
+	}
+	return undefined;
+}
+
+/**
+ * Bound on system-config writes: a deploy profile may only write under /etc, /usr or /opt (of the
+ * root it targets). Trust boundary: the catalog file is external data, so a malformed profile must
+ * not be able to aim a write at, say, /boot or /home.
+ */
+export function assertSystemWriteAllowed(paths: KanPaths, target: string): void {
+	const normalized = resolve(target);
+	for (const dir of ["etc", "usr", "opt"]) {
+		const base = join(paths.root, `/${dir}`);
+		if (normalized === base || normalized.startsWith(`${base}${sep}`)) return;
+	}
+	throw new UnsafePathError(`deploy profile: refusing write outside /etc, /usr, /opt: ${target}`);
+}
+
+/** The nearest existing ancestor of `path` (a fresh staging root has no /opt yet). */
+function nearestExisting(path: string): string {
+	let dir = resolve(path);
+	for (;;) {
+		if (existsSync(dir) && statSync(dir).isDirectory()) return dir;
+		const parent = dirname(dir);
+		if (parent === dir) return sep;
+		dir = parent;
 	}
 }

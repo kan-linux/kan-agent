@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft |
 | Date | 2026-11-22 |
-| Chinese version | [HIGH_LEVEL_DESIGN.zh-CN.md](https://github.com/kan-linux/kan-agent/blob/master/docs/HIGH_LEVEL_DESIGN.zh-CN.md) |
+| Chinese version | [HIGH_LEVEL_DESIGN.zh-CN.md](https://github.com/kan-linux/kan-agent/blob/kan-agent/docs/HIGH_LEVEL_DESIGN.zh-CN.md) |
 
 
 ## 1. Overview

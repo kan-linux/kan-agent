@@ -24,6 +24,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
+import type { HookName } from "./catalog.ts";
 import { assertSafeToRemove, type KanPaths } from "./root.ts";
 
 export interface GenerationRecord {
@@ -49,7 +50,23 @@ export interface GenerationRecord {
 	parent_generation?: number;
 	/** Set when this generation is a rollback rather than a deploy. */
 	rolled_back_from?: number;
+	/** Pre-images of the system config paths this deploy wrote, for rollback restore. */
+	config_undo?: ConfigUndoEntry[];
+	/** System-index hooks this deploy ran after config placement. */
+	hooks?: HookName[];
 }
+
+/** What a system config path held before a deploy wrote it. */
+export type ConfigUndoEntry = {
+	/** Root-absolute path as it exists on the live system (or under the staging root). */
+	path: string;
+	previous: /** The path did not exist; rollback removes it. */
+		| { kind: "absent" }
+		/** The path held a regular file, backed up under the state dir (path relative to it). */
+		| { kind: "file"; backup: string }
+		/** The path was a symlink; rollback recreates it with this target. */
+		| { kind: "symlink"; target: string };
+};
 
 /** One component's generations: a numbered log plus a `current` pointer. */
 export class GenerationStore {
@@ -105,7 +122,9 @@ export class GenerationStore {
 	/**
 	 * Record a new generation and make it current. `flipInstallRoot` is called after the record is
 	 * written but before `current` moves, so a crash between the two leaves `current` pointing at
-	 * the still-reachable previous generation.
+	 * the still-reachable previous generation. The number is one past the highest recorded
+	 * generation, not one past `current`: a rollback leaves annotation records above `current` that
+	 * must not be overwritten by the next deploy.
 	 */
 	advance(
 		component: string,
@@ -113,7 +132,7 @@ export class GenerationStore {
 		flipInstallRoot: (storePath: string, installRoot: string) => void,
 	): GenerationRecord {
 		const previous = this.current(component);
-		const generation = (previous?.generation ?? 0) + 1;
+		const generation = (this.list(component).at(-1)?.generation ?? 0) + 1;
 		const record: GenerationRecord = {
 			...fields,
 			generation,
@@ -142,13 +161,17 @@ export class GenerationStore {
 		this.pointCurrent(component, generation);
 		if (from && from.generation !== generation) {
 			// Record the rollback itself so the log shows the full history, then re-point at the
-			// restored generation: the restored state is what a later deploy builds on.
+			// restored generation: the restored state is what a later deploy builds on. The
+			// annotation carries no config writes of its own — restoring its generation's config
+			// means replaying the target's state, never undoing anything new.
 			const rollbackRecord: GenerationRecord = {
 				...target,
 				generation: (this.list(component).at(-1)?.generation ?? generation) + 1,
 				created_at: new Date().toISOString(),
 				parent_generation: from.generation,
 				rolled_back_from: from.generation,
+				config_undo: [],
+				hooks: [],
 			};
 			writeFileSync(
 				this.recordPath(component, rollbackRecord.generation),
@@ -201,12 +224,15 @@ export function commitToStore(paths: KanPaths, component: string, version: strin
 
 /**
  * Recursively restore write permission so a read-only store tree can be replaced or deleted.
- * Anything that removes store content needs this: the store is read-only by construction.
+ * Anything that removes store content needs this: the store is read-only by construction. Symlinks
+ * are skipped: chmod follows them, and a link into the tree would silently flip the mode of
+ * whatever it points at (the /opt symlink pointing into the store is exactly that case).
  */
 export function makeWritable(dir: string): void {
 	chmodSync(dir, 0o755);
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const path = join(dir, entry.name);
+		if (entry.isSymbolicLink()) continue;
 		if (entry.isDirectory()) {
 			makeWritable(path);
 		} else {
@@ -218,11 +244,12 @@ export function makeWritable(dir: string): void {
 /**
  * Recursively strip WRITE permission so the store is read-only by construction. Execute and read
  * bits survive: the store holds executables, and chmod 0444 on them would strip the execute bit and
- * make the deployed tool unrunnable.
+ * make the deployed tool unrunnable. Symlinks are skipped for the same reason as in makeWritable.
  */
 function makeReadOnly(dir: string): void {
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const path = join(dir, entry.name);
+		if (entry.isSymbolicLink()) continue;
 		if (entry.isDirectory()) {
 			makeReadOnly(path);
 		}
