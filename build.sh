@@ -16,7 +16,7 @@
 #   build.sh ci                    run_check + run_ut + build + run_selftest
 #   build.sh run_llamaserver [gguf]  start the tree's llama-server (managed-runtime baseline)
 #   build.sh run_kanagent [args...]  run the built CLI, e.g.:
-#                                  build.sh run_kanagent -p "帮我安装go"
+#                                  build.sh run_kanagent "帮我安装go"
 #   build.sh deploy                install the tree to /opt/kan-agent (root; keeps llm/*.gguf)
 #
 set -euo pipefail
@@ -175,6 +175,7 @@ function assemble_release_tree()
     # ships next to dist/kan-agent).
     cp packages/coding-agent/dist/kan-agent "${RELEASE_PATH}/"
     cp packages/kan-agent/config/*.json "${RELEASE_PATH}/config/"
+    printf "%s\n" "${VERSION}" > "${RELEASE_PATH}/config/VERSION"
     local asset
     for asset in package.json README.md CHANGELOG.md docs examples theme assets export-html photon_rs_bg.wasm; do
         [ -e "packages/coding-agent/dist/${asset}" ] && cp -a "packages/coding-agent/dist/${asset}" "${RELEASE_PATH}/"
@@ -273,7 +274,7 @@ function deploy()
     fi
 
     printf "deployed: %s\n" "${INSTALL_PATH}"
-    printf "run with: %s/kan-agent -p \"帮我安装go\"\n" "${INSTALL_PATH}"
+    printf "run with: %s/kan-agent \"帮我安装go\"\n" "${INSTALL_PATH}"
 }
 
 function show_usage()
@@ -291,7 +292,7 @@ function show_usage()
     echo "  $0 ci                    (run_check + run_ut + build + run_selftest)"
     echo ""
     echo "  $0 run_llamaserver  [model.gguf]"
-    echo "  $0 run_kanagent     [args...]   e.g. -p \"帮我安装go\""
+    echo "  $0 run_kanagent     [args...]   e.g. \"帮我安装go\""
     echo "  $0 deploy                    (install to ${INSTALL_PATH}; root; keeps llm/*.gguf)"
     echo ""
     echo "Layout of the release tree (installed to ${INSTALL_PATH}):"
@@ -310,7 +311,7 @@ function show_usage()
     echo "  $0 run_selftest"
     echo "  $0 ci"
     echo "  $0 run_llamaserver"
-    echo "  $0 run_kanagent -p \"帮我安装go\""
+    echo "  $0 run_kanagent \"帮我安装go\""
     echo "  sudo $0 deploy"
     echo -e "\n"
 }
