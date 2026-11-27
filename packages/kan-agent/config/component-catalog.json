@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.2.0",
+  "schema_version": "0.3.0",
   "status": "draft",
   "description": "Kan-Agent official component catalog (HLD §4.6). Substrate data, not a tool: the single source of truth for official distribution URLs, versions, install roots and config placement. repo_fetch/install_audit resolve URLs from here and reject anything not in it (anti-URL-fabrication); sys_inspect lists installable components/versions read-only; the permission layer adjudicates URL legality from here. NOT derived from kan-linux's build system: that system runs at OS-build time against a rootfs being assembled, while this catalog describes installs on an already-installed user machine. Absorbs install-prebuilts.sh: its 8 components, version constants, URL patterns, /opt roots, extract layouts and setup_*_config placement live here as data.",
   "principles": [
@@ -32,7 +32,7 @@
       "config_placement": [],
       "dependencies": [],
       "sha256": {
-        "1.27.4": "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840"
+        "go1.27.4.linux-amd64.tar.gz": "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840"
       }
     },
     {

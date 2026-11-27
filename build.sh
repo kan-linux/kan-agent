@@ -171,15 +171,23 @@ function assemble_release_tree()
     rm -rf "${RELEASE_PATH}"
     mkdir -p "${RELEASE_BIN}" "${RELEASE_PATH}/llm" "${RELEASE_PATH}/config"
 
-    # Product binary and its runtime assets (the set packages/coding-agent copy-binary-assets
-    # ships next to dist/kan-agent).
+    # Product binary and the files its runtime actually reads: the app manifest (piConfig ->
+    # KAN_AGENT_* env prefix and branding) and the kan-agent config. pi's build artifacts (docs,
+    # examples, themes, assets, export templates, README, CHANGELOG, wasm) are coding-assistant
+    # surface and are deliberately not shipped.
     cp packages/coding-agent/dist/kan-agent "${RELEASE_PATH}/"
+    cat > "${RELEASE_PATH}/package.json" <<EOF
+{
+	"name": "kan-agent",
+	"version": "${VERSION}",
+	"piConfig": {
+		"name": "kan-agent",
+		"configDir": ".pi"
+	}
+}
+EOF
     cp packages/kan-agent/config/*.json "${RELEASE_PATH}/config/"
     printf "%s\n" "${VERSION}" > "${RELEASE_PATH}/config/VERSION"
-    local asset
-    for asset in package.json README.md CHANGELOG.md docs examples theme assets export-html photon_rs_bg.wasm; do
-        [ -e "packages/coding-agent/dist/${asset}" ] && cp -a "packages/coding-agent/dist/${asset}" "${RELEASE_PATH}/"
-    done
 
     # llama-server runtime tree: the binary plus every non-system .so it resolves.
     cp -L "${GGML_HEXA_BIN}/llama-server" "${RELEASE_BIN}/"

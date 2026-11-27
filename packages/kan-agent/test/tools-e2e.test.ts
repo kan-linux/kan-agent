@@ -101,7 +101,10 @@ function writeTestCatalog(dir: string, hashOverride?: Record<string, string>): s
 		sha256:
 			hashOverride ??
 			Object.fromEntries(
-				VERSIONS.map((v) => [v.version, artifacts.get(`${COMPONENT}-${v.version}.tar.gz`)!.sha256]),
+				VERSIONS.map((v) => {
+					const tarball = `${COMPONENT}-${v.version}.tar.gz`;
+					return [tarball, artifacts.get(tarball)!.sha256];
+				}),
 			),
 	};
 	const path = join(dir, "catalog.json");
@@ -187,7 +190,7 @@ describe("binary install pipeline", () => {
 
 	it("fails the fetch when the downloaded bytes do not match the pinned sha256", async () => {
 		const tampered = ComponentCatalog.load(
-			writeTestCatalog(root, Object.fromEntries(VERSIONS.map((v) => [v.version, "0".repeat(64)]))),
+			writeTestCatalog(root, Object.fromEntries(VERSIONS.map((v) => [`${COMPONENT}-${v.version}.tar.gz`, "0".repeat(64)]))),
 		);
 		const outcome = await repoFetchBinary({ source_type: "binary", component: COMPONENT }, paths, tampered);
 		expect(outcome.kind).toBe("error");

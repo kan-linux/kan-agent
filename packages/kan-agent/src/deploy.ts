@@ -150,7 +150,7 @@ export async function atomicDeployBinary(
 				install_root: installRoot,
 				config_placement: entry.config_placement,
 				verify_cmd: verifyCmd,
-				sha256: entry.sha256?.[version],
+				sha256: resolved.sha256,
 				config_undo: placement.configUndo,
 				hooks: placement.hooks,
 			},

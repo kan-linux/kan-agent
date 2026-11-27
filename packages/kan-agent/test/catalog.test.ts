@@ -30,6 +30,24 @@ describe("ComponentCatalog.resolve", () => {
 		expect(catalog.resolve("go").sha256).toMatch(/^[0-9a-f]{64}$/);
 	});
 
+	it("pins sha256 per tarball so one version's target variants each get their own hash", () => {
+		const variants = new ComponentCatalog([
+			{
+				...catalog.get("go")!,
+				name: "twovariant",
+				tarball_pattern: "twovariant-{target}.tar.gz",
+				url_pattern: "https://example.com/{tarball}",
+				target_probe: { kind: "cpu_flag", flag: "avx2", if_present: "fast", if_absent: "baseline" },
+				sha256: {
+					"twovariant-fast.tar.gz": "f".repeat(64),
+					"twovariant-baseline.tar.gz": "b".repeat(64),
+				},
+			},
+		]);
+		const resolved = variants.resolve("twovariant");
+		expect(resolved.sha256).toBe(resolved.tarball === "twovariant-fast.tar.gz" ? "f".repeat(64) : "b".repeat(64));
+	});
+
 	it("rejects a component that is not in the catalog", () => {
 		expect(() => catalog.resolve("definitely-not-a-component")).toThrow(CatalogError);
 		expect(() => catalog.resolve("definitely-not-a-component")).toThrow(/not in the official component catalog/);

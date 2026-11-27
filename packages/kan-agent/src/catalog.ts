@@ -111,7 +111,11 @@ export interface CatalogEntry {
 	/** The declarative setup_*_config steps executed by atomic_deploy. */
 	deploy_profile?: DeployProfile;
 	dependencies: string[];
-	/** Optional. Absence means integrity rests on the official-source allowlist plus human audit. */
+	/**
+	 * Optional. Keyed by tarball filename — the hash belongs to the artifact's bytes, so one
+	 * version can pin several target variants (e.g. mimocode's AVX2 and baseline builds).
+	 * Absence means integrity rests on the official-source allowlist plus human audit.
+	 */
 	sha256?: Record<string, string>;
 }
 
@@ -259,7 +263,7 @@ export class ComponentCatalog {
 			.replaceAll("{target}", target)
 			.replaceAll("{tarball}", tarball);
 		const resolved: ResolvedSource = { name: entry.name, version: picked, tarball, url, entry };
-		const hash = entry.sha256?.[picked];
+		const hash = entry.sha256?.[tarball];
 		if (hash) resolved.sha256 = hash;
 		return resolved;
 	}
