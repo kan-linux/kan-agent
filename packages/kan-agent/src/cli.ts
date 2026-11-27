@@ -20,6 +20,17 @@ import { getAgentDir, type InlineExtension, type MainOptions, main } from "@eare
 import kanAgentExtension from "./extension.ts";
 import { ensureLlm, seedModelsJson } from "./llm.ts";
 
+// Proxy handling before any fetch: bun's fetch honors proxy env natively, node's ignores it
+// unless NODE_USE_ENV_PROXY is set (no-op on older node). And the managed llama-server lives on
+// 127.0.0.1, which must never be routed through a proxy — force it into no_proxy either way.
+process.env.NODE_USE_ENV_PROXY ??= "1";
+for (const key of ["no_proxy", "NO_PROXY"] as const) {
+	const current = process.env[key] ?? "";
+	if (!/(^|,)\s*(127\.0\.0\.1|localhost)\s*(,|$)/.test(current)) {
+		process.env[key] = current ? `${current},127.0.0.1,localhost` : "127.0.0.1,localhost";
+	}
+}
+
 const extensionFactories: InlineExtension[] = [{ name: "kan-agent", factory: kanAgentExtension, builtin: true }];
 
 /** Flags kan-agent handles itself; stripped so pi's parser never sees them. */
@@ -105,9 +116,12 @@ if (!noLlm && process.env.KAN_AGENT_NO_AUTO_LLM !== "1" && wantsModel(args)) {
 	try {
 		const llm = await ensureLlm({ logPath: `${agentDir}/llama-server.log` });
 		seedModelsJson(llm.baseUrl, agentDir);
+		console.error(`[kan-agent] model: ${llm.modelPath}`);
 	} catch (e) {
-		// Fall back to whatever models.json the agent dir already holds.
-		console.error(`[kan-agent] managed llama-server unavailable: ${(e as Error).message}`);
+		// A request without a usable model is a dead end: fail here with the fix spelled out,
+		// not deeper in a confusing "no models available". Use --no-llm for a custom models.json.
+		console.error(`[kan-agent] ${(e as Error).message}`);
+		process.exit(1);
 	}
 }
 

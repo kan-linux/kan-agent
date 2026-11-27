@@ -31,11 +31,18 @@ export const DEFAULT_LLM_PORT = 8091;
 /** Where the model tree lives (the user places the GGUF here). */
 export const DEFAULT_LLM_DIR = "/opt/kan-agent/llm";
 
+/** The installed-convention root; the running tree (next to the binary) wins when present. */
+const INSTALL_ROOT = "/opt/kan-agent";
+
 const HEALTH_TIMEOUT_MS = 120_000;
 
 export interface ManagedLlm {
 	/** OpenAI-compatible endpoint, e.g. http://127.0.0.1:8091/v1 */
 	baseUrl: string;
+	/** The .gguf in use, for startup reporting. */
+	modelPath: string;
+	/** The llama-server binary in use, for startup reporting. */
+	serverPath: string;
 	/** PID of the spawned server; undefined when an already-running server was reused. */
 	pid?: number;
 	/** Kill the spawned server. No-op when a running server was reused. */
@@ -80,35 +87,58 @@ function serverArgs(model: string, port: number): string[] {
 	];
 }
 
-/** The llama-server binary: KAN_AGENT_LLAMA_SERVER -> /opt/kan-agent/bin -> <release tree>/bin -> PATH. */
-export function findLlamaServer(): string | undefined {
-	const candidates = [
-		process.env.KAN_AGENT_LLAMA_SERVER,
-		"/opt/kan-agent/bin/llama-server",
-		join(dirname(process.execPath), "bin", "llama-server"),
-		...(process.env.PATH?.split(delimiter).map((dir) => join(dir, "llama-server")) ?? []),
-	].filter((p): p is string => p !== undefined);
-	return candidates.find((p) => existsSync(p) && statSync(p).isFile());
+/**
+ * The llama-server binary: KAN_AGENT_LLAMA_SERVER -> the running tree's bin/ -> /opt/kan-agent/bin
+ * -> PATH. A running tree that has its own bin/ is authoritative: it must not silently borrow
+ * another installation's server.
+ */
+export function findLlamaServer(execDir = dirname(process.execPath)): string | undefined {
+	const override = process.env.KAN_AGENT_LLAMA_SERVER;
+	if (override !== undefined) return isFile(override) ? override : undefined;
+	const treeBin = join(execDir, "bin");
+	const candidates = existsSync(treeBin)
+		? [join(treeBin, "llama-server")]
+		: [
+				join(INSTALL_ROOT, "bin", "llama-server"),
+				...(process.env.PATH?.split(delimiter).map((dir) => join(dir, "llama-server")) ?? []),
+			];
+	return candidates.find((p) => isFile(p));
 }
 
-/** The single *.gguf under the model dir (KAN_AGENT_LLM_DIR -> /opt/kan-agent/llm). */
-export function findModel(): string | undefined {
-	const candidates = [process.env.KAN_AGENT_LLM_DIR ?? DEFAULT_LLM_DIR, join(dirname(process.execPath), "llm")];
-	for (const dir of candidates) {
-		if (!existsSync(dir)) continue;
-		const models = readdirSync(dir)
-			.filter((name) => name.endsWith(".gguf"))
-			.sort()
-			.map((name) => join(dir, name));
-		if (models.length === 0) continue;
-		if (models.length > 1) {
-			throw new Error(
-				`${dir} holds ${models.length} .gguf files; keep exactly one (found: ${models.map((m) => m.split("/").pop()).join(", ")})`,
-			);
-		}
-		return models[0];
+/**
+ * The single *.gguf for this run: KAN_AGENT_LLM_DIR -> the running tree's llm/ -> /opt/kan-agent/llm.
+ * The directory that applies is the ONLY source — an empty one means "put the model here", never
+ * "borrow one from another tree".
+ */
+export function findModel(execDir = dirname(process.execPath)): string {
+	const treeLlm = join(execDir, "llm");
+	const dir = process.env.KAN_AGENT_LLM_DIR ?? (existsSync(treeLlm) ? treeLlm : join(INSTALL_ROOT, "llm"));
+	if (!existsSync(dir)) {
+		throw new Error(`no model directory at ${dir}; place exactly one .gguf model there\n${MODEL_ADVICE}`);
 	}
-	return undefined;
+	const models = readdirSync(dir)
+		.filter((name) => name.endsWith(".gguf"))
+		.sort()
+		.map((name) => join(dir, name));
+	if (models.length === 0) {
+		throw new Error(`${dir} holds no .gguf model; place exactly one there\n${MODEL_ADVICE}`);
+	}
+	if (models.length > 1) {
+		throw new Error(
+			`${dir} holds ${models.length} .gguf files; keep exactly one (found: ${models.map((m) => m.split("/").pop()).join(", ")})`,
+		);
+	}
+	return models[0];
+}
+
+/** What to do when the model dir cannot serve a request: what to get and where. */
+const MODEL_ADVICE = [
+	"  current base model: Gemma4-e4b Q4_0 (we will provide our fine-tuned model in the future)",
+	"  download: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/blob/main/gemma-4-E4B-it-Q4_0.gguf",
+].join("\n");
+
+function isFile(path: string): boolean {
+	return existsSync(path) && statSync(path).isFile();
 }
 
 /**
@@ -118,19 +148,21 @@ export function findModel(): string | undefined {
  */
 export async function ensureLlm(options?: { baseUrl?: string; logPath?: string }): Promise<ManagedLlm> {
 	const serverPath = findLlamaServer();
-	const model = findModel();
 	if (!serverPath) {
 		throw new Error(
-			"llama-server not found (looked at KAN_AGENT_LLAMA_SERVER, /opt/kan-agent/bin/llama-server, PATH)",
+			"llama-server not found (looked at KAN_AGENT_LLAMA_SERVER, the tree's bin/, /opt/kan-agent/bin, PATH)",
 		);
 	}
-	if (!model) {
-		throw new Error(`no .gguf model in ${process.env.KAN_AGENT_LLM_DIR ?? DEFAULT_LLM_DIR}`);
-	}
+	const model = findModel();
 
 	const preferred = options?.baseUrl ? portOf(options.baseUrl) : DEFAULT_LLM_PORT;
 	if (preferred !== undefined && (await isHealthy(`http://127.0.0.1:${preferred}`))) {
-		return { baseUrl: `http://127.0.0.1:${preferred}/v1`, stop: () => {} };
+		return {
+			baseUrl: `http://127.0.0.1:${preferred}/v1`,
+			modelPath: model,
+			serverPath,
+			stop: () => {},
+		};
 	}
 
 	const port = preferred ?? (await freePort());
@@ -179,7 +211,7 @@ export async function ensureLlm(options?: { baseUrl?: string; logPath?: string }
 			throw new Error(`llama-server exited with code ${child.exitCode} before becoming healthy`);
 		}
 		if (await isHealthy(baseUrl)) {
-			return { baseUrl: `${baseUrl}/v1`, pid: child.pid, stop };
+			return { baseUrl: `${baseUrl}/v1`, modelPath: model, serverPath, pid: child.pid, stop };
 		}
 		await sleep(500);
 	}
