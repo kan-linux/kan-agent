@@ -1,7 +1,7 @@
 {
   "schema_version": "0.3.0",
   "status": "draft",
-  "description": "Kan-Agent official component catalog (HLD §4.6). Substrate data, not a tool: the single source of truth for official distribution URLs, versions, install roots and config placement. repo_fetch/install_audit resolve URLs from here and reject anything not in it (anti-URL-fabrication); sys_inspect lists installable components/versions read-only; the permission layer adjudicates URL legality from here. NOT derived from kan-linux's build system: that system runs at OS-build time against a rootfs being assembled, while this catalog describes installs on an already-installed user machine. Absorbs install-prebuilts.sh: its 8 components, version constants, URL patterns, /opt roots, extract layouts and setup_*_config placement live here as data.",
+  "description": "Kan-Agent official component catalog (HLD §4.6). Substrate data, not a tool: the single source of truth for official distribution URLs, versions, install roots and config placement. repo_fetch/install_audit resolve URLs from here and reject anything not in it (anti-URL-fabrication); sys_inspect lists installable components/versions read-only; the permission layer adjudicates URL legality from here. NOT derived from kan-linux's build system: that system runs at OS-build time against a rootfs being assembled, while this catalog describes installs on an already-installed user machine. Absorbs install-prebuilts.sh: its 9 components, version constants, URL patterns, /opt roots, extract layouts and setup_*_config placement live here as data.",
   "principles": [
     "origin is mandatory and must be \"official\": third-party mirrors, CDN redirectors and auto-generated source snapshots are not catalog data.",
     "url_pattern and versions are separate fields so a version bump changes only the version list, never the URL shape.",
@@ -274,6 +274,43 @@
               "libreoffice*-startcenter.desktop",
               "libreoffice*-impress.desktop"
             ]
+          },
+          { "kind": "hook", "hook": "update_desktop_database" },
+          { "kind": "hook", "hook": "update_mime_database" }
+        ]
+      },
+      "dependencies": []
+    },
+    {
+      "name": "chrome",
+      "description": "Google Chrome web browser (official Google .deb, unpacked with ar + tar into its own layout at /opt/google/chrome). The download link is rolling — always the latest stable — so the package's own version keys the store entry.",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "optional",
+      "tarball_pattern": "google-chrome-stable_current_amd64.deb",
+      "url_pattern": "https://dl.google.com/linux/direct/{tarball}",
+      "versions": ["current"],
+      "default_version": "current",
+      "install_root": "/opt/google/chrome",
+      "extract_root": "/opt/google/chrome",
+      "extract": { "kind": "deb", "tree_glob": "opt/google/chrome", "usr_dir": "usr" },
+      "fixups": [{ "kind": "setuid", "path": "chrome-sandbox" }],
+      "verify_cmd": "chrome --version",
+      "config_placement": [
+        "/usr/bin/google-chrome-stable (launcher symlink from the .deb's usr payload)",
+        "/usr/share/applications (desktop entries)",
+        "/usr/share/icons/hicolor/256x256/apps/google-chrome.png (menu icon)",
+        "updated desktop/mime databases",
+        "chrome-sandbox setuid root (Chrome's sandbox)"
+      ],
+      "deploy_profile": {
+        "in_tree": [],
+        "system": [
+          { "kind": "copy_tree", "from": "usr", "to": "/usr" },
+          {
+            "kind": "symlink",
+            "from": "product_logo_256.png",
+            "to": "/usr/share/icons/hicolor/256x256/apps/google-chrome.png"
           },
           { "kind": "hook", "hook": "update_desktop_database" },
           { "kind": "hook", "hook": "update_mime_database" }

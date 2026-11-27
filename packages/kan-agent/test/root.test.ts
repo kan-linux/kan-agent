@@ -1,7 +1,9 @@
 /**
  * The safe_rm_rf allowlist (HLD §9: install-prebuilts.sh's guard becomes a substrate primitive).
  * The pipeline runs as root on a live system, so removal must be bounded to the state dir and
- * single tool roots under /opt — never /, /opt itself, a system root, or an arbitrary deep path.
+ * tool roots under /opt — never /, /opt itself, a system root, or an arbitrary deep path. A
+ * nested install root (vendor layout like /opt/google/chrome) is removable only as the exact
+ * root its catalog entry declares.
  */
 
 import { describe, expect, it } from "vitest";
@@ -26,6 +28,17 @@ describe("assertSafeToRemove", () => {
 		expect(() => assertSafeToRemove(paths, "/opt/go/bin")).toThrow(UnsafePathError);
 		expect(() => assertSafeToRemove(paths, "/opt/go/bin/go")).toThrow(UnsafePathError);
 		expect(() => assertSafeToRemove(paths, "/opt")).toThrow(UnsafePathError);
+	});
+
+	it("allows a nested install root only as the exact declared root", () => {
+		expect(() => assertSafeToRemove(paths, "/staging/opt/google/chrome", "/staging/opt/google/chrome")).not.toThrow();
+		// Without the declaration a nested root is still outside the one-level allowlist.
+		expect(() => assertSafeToRemove(paths, "/staging/opt/google/chrome")).toThrow(UnsafePathError);
+		expect(() =>
+			assertSafeToRemove(paths, "/staging/opt/google/chrome/locales", "/staging/opt/google/chrome"),
+		).toThrow(UnsafePathError);
+		// A declared root deeper than one vendor level is never a tool root.
+		expect(() => assertSafeToRemove(paths, "/staging/opt/a/b/c", "/staging/opt/a/b/c")).toThrow(UnsafePathError);
 	});
 
 	it("allows the state dir subtree and one-level tool roots under /opt", () => {

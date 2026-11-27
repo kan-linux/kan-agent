@@ -70,7 +70,7 @@ describe("generations", () => {
 				component: "go",
 				version: "1.27.4",
 				store_path: paths.storePath("go", "1.27.4"),
-				install_root: paths.installRoot("go"),
+				install_root: paths.installRoot("/opt/go"),
 				config_placement: [],
 			},
 			flipSymlink,
@@ -90,12 +90,12 @@ describe("generations", () => {
 				component: "go",
 				version: "1.27.4",
 				store_path: storePath,
-				install_root: paths.installRoot("go"),
+				install_root: paths.installRoot("/opt/go"),
 				config_placement: [],
 			},
 			flipSymlink,
 		);
-		expect(readlinkSync(paths.installRoot("go"))).toBe("..".concat("/var/lib/kan-agent/store/go/1.27.4"));
+		expect(readlinkSync(paths.installRoot("/opt/go"))).toBe("..".concat("/var/lib/kan-agent/store/go/1.27.4"));
 	});
 
 	it("rolls back to an earlier generation", () => {
@@ -107,7 +107,7 @@ describe("generations", () => {
 				component: "go",
 				version: "1.27.4",
 				store_path: first,
-				install_root: paths.installRoot("go"),
+				install_root: paths.installRoot("/opt/go"),
 				config_placement: [],
 			},
 			flipSymlink,
@@ -119,7 +119,7 @@ describe("generations", () => {
 				component: "go",
 				version: "1.27.5",
 				store_path: second,
-				install_root: paths.installRoot("go"),
+				install_root: paths.installRoot("/opt/go"),
 				config_placement: [],
 			},
 			flipSymlink,
@@ -128,7 +128,7 @@ describe("generations", () => {
 
 		store.rollbackTo("go", 1, flipSymlink);
 		expect(store.current("go")?.generation).toBe(1);
-		expect(readlinkSync(paths.installRoot("go"))).toContain("1.27.4");
+		expect(readlinkSync(paths.installRoot("/opt/go"))).toContain("1.27.4");
 	});
 
 	it("refuses a generation that does not exist", () => {
@@ -154,6 +154,6 @@ describe("assertSafeToRemove", () => {
 
 	it("allows the state dir and per-tool /opt roots", () => {
 		expect(() => assertSafeToRemove(paths, paths.workspaceDir)).not.toThrow();
-		expect(() => assertSafeToRemove(paths, paths.installRoot("go"))).not.toThrow();
+		expect(() => assertSafeToRemove(paths, paths.installRoot("/opt/go"))).not.toThrow();
 	});
 });

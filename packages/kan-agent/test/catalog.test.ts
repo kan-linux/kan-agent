@@ -92,12 +92,23 @@ describe("ComponentCatalog.resolve", () => {
 		expect(resolved.url).toContain(resolved.tarball);
 		expect(resolved.url).not.toContain("{target}");
 	});
+
+	it("resolves chrome's rolling direct link; the package itself declares the version", () => {
+		const resolved = catalog.resolve("chrome");
+		expect(resolved.version).toBe("current");
+		expect(resolved.tarball).toBe("google-chrome-stable_current_amd64.deb");
+		expect(resolved.url).toBe("https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb");
+		// A rolling artifact cannot pin a hash; trust rests on the official link plus human audit.
+		expect(resolved.sha256).toBeUndefined();
+		// There are no pinned versions behind the rolling link.
+		expect(() => catalog.resolve("chrome", "158.0.8127.88-1")).toThrow(/not in the catalog/);
+	});
 });
 
 describe("catalog coverage of install-prebuilts.sh", () => {
 	it("carries every catalog component", () => {
 		expect(catalog.names().sort()).toEqual(
-			["bun", "firefox", "go", "jdk", "libreoffice", "mimocode", "node", "rust", "vulkan"].sort(),
+			["bun", "chrome", "firefox", "go", "jdk", "libreoffice", "mimocode", "node", "rust", "vulkan"].sort(),
 		);
 	});
 
@@ -113,7 +124,7 @@ describe("catalog coverage of install-prebuilts.sh", () => {
 			.map((e) => e.name)
 			.sort();
 		expect(inImage).toEqual(["firefox", "jdk", "mimocode", "node"]);
-		expect(optional).toEqual(["bun", "go", "libreoffice", "rust", "vulkan"]);
+		expect(optional).toEqual(["bun", "chrome", "go", "libreoffice", "rust", "vulkan"]);
 	});
 
 	it("resolves every default version to an official distribution host", () => {
@@ -127,6 +138,7 @@ describe("catalog coverage of install-prebuilts.sh", () => {
 			node: "https://nodejs.org/dist/",
 			bun: "https://github.com/oven-sh/bun/releases/download/",
 			libreoffice: "https://appimages.libreitalia.org/",
+			chrome: "https://dl.google.com/linux/direct/",
 		};
 		for (const [name, prefix] of Object.entries(hosts)) {
 			expect(catalog.resolve(name).url.startsWith(prefix), name).toBe(true);
@@ -148,6 +160,36 @@ describe("catalog coverage of install-prebuilts.sh", () => {
 		expect(catalog.get("node")?.deploy_profile?.system.map((s) => s.kind)).toContain("symlink_dir_files");
 		expect(catalog.get("mimocode")?.deploy_profile?.system.map((s) => s.kind)).toContain("symlink");
 		expect(catalog.get("libreoffice")?.deploy_profile?.system.map((s) => s.kind)).toContain("delete_matching");
+		expect(catalog.get("chrome")?.deploy_profile?.system.map((s) => s.kind)).toContain("copy_tree");
+		expect(catalog.get("chrome")?.deploy_profile?.system.map((s) => s.kind)).toContain("symlink");
+		expect(catalog.get("chrome")?.deploy_profile?.system.map((s) => s.kind)).toContain("hook");
+	});
+});
+
+describe("install root and fixup validation", () => {
+	const baseEntry = catalog.get("go")!;
+
+	it("accepts one-level and one-vendor-level install roots", () => {
+		for (const install_root of ["/opt/tool", "/opt/google/chrome"]) {
+			expect(() => new ComponentCatalog([{ ...baseEntry, name: "ok", install_root }]), install_root).not.toThrow();
+		}
+	});
+
+	it("rejects install roots outside /opt or deeper than one vendor level", () => {
+		for (const install_root of ["/opt/a/b/c", "/home/x", "opt/a", "/opt/a/", "/opt", "/opt/../etc"]) {
+			expect(() => new ComponentCatalog([{ ...baseEntry, name: "bad", install_root }]), install_root).toThrow(
+				/install_root/,
+			);
+		}
+	});
+
+	it("rejects a fixup path that escapes the install tree", () => {
+		for (const path of ["../x", "/etc/passwd"]) {
+			expect(
+				() => new ComponentCatalog([{ ...baseEntry, name: "badfix", fixups: [{ kind: "setuid", path }] }]),
+				path,
+			).toThrow(/fixup path/);
+		}
 	});
 });
 

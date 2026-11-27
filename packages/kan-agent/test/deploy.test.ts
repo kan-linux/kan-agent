@@ -48,7 +48,7 @@ describe("atomicDeployBinary", () => {
 		const artifact = stageFetchedGo("go1.27.4.linux-amd64.tar.gz", DEPLOYED_MARKER);
 		const outcome = await atomicDeployBinary({ component: "go", version: "1.27.4", artifact }, paths, catalog);
 		expect(outcome.kind).toBe("ok");
-		expect(readlinkSync(paths.installRoot("go"))).toBe("..".concat("/var/lib/kan-agent/store/go/1.27.4"));
+		expect(readlinkSync(paths.installRoot("/opt/go"))).toBe("..".concat("/var/lib/kan-agent/store/go/1.27.4"));
 		expect(new GenerationStore(paths).current("go")?.generation).toBe(1);
 	});
 
@@ -74,7 +74,7 @@ describe("atomicDeployBinary", () => {
 			catalog,
 		);
 		expect(outcome.kind).toBe("ok");
-		expect(readlinkSync(paths.installRoot("go"))).toContain("store");
+		expect(readlinkSync(paths.installRoot("/opt/go"))).toContain("store");
 	});
 
 	it("rejects a directory artifact that does not hold the fetched package", async () => {
@@ -170,7 +170,7 @@ describe("systemRollback", () => {
 		const outcome = await systemRollback({ component: "go", generation: "1" }, paths, catalog);
 		expect(outcome.kind).toBe("ok");
 		expect(new GenerationStore(paths).current("go")?.generation).toBe(1);
-		expect(readlinkSync(paths.installRoot("go"))).toContain("1.27.4");
+		expect(readlinkSync(paths.installRoot("/opt/go"))).toContain("1.27.4");
 	});
 
 	it("rejects a generation that does not exist", async () => {

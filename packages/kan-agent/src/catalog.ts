@@ -33,12 +33,18 @@ export type ExtractSpec =
 	| { kind: "zip_topdir" }
 	/** An AppImage: `--appimage-extract`, the `tree_glob` directory's contents become the tree,
 	 *  and `usr_dir` is preserved inside the tree so deploy profiles can place it. */
-	| { kind: "appimage"; tree_glob: string; usr_dir: string };
+	| { kind: "appimage"; tree_glob: string; usr_dir: string }
+	/** A .deb is an ar archive; its data.tar.* payload is unpacked like a tarball. The
+	 *  `tree_glob` directory's contents become the tree, and `usr_dir` is preserved inside the
+	 *  tree so deploy profiles can place it (google-chrome's launcher and desktop entries). */
+	| { kind: "deb"; tree_glob: string; usr_dir: string };
 
 /** Post-extract fixups (closed set; names the layout corrections the script performs inline). */
 export type FixupSpec =
 	/** rust-std's lib/rustlib tree must be merged into rustc's sysroot or rustc cannot find std. */
-	{ kind: "rust_std_merge" };
+	| { kind: "rust_std_merge" }
+	/** Keep the setuid root bit on `path` (chrome-sandbox: without it Chrome loses its sandbox). */
+	| { kind: "setuid"; path: string };
 
 /** Runtime variant selection for a URL placeholder (mimocode picks its build by CPU flag). */
 export interface TargetProbe {
@@ -187,6 +193,8 @@ export class ComponentCatalog {
 					`${entry.name}: origin must be "official", got ${entry.origin}`,
 				);
 			}
+			validateInstallRoot(entry);
+			validateFixups(entry);
 			validateDeployProfile(entry);
 			this.byName.set(entry.name, entry);
 		}
@@ -313,6 +321,43 @@ function cpuHasFlag(flag: string): boolean {
 }
 
 const IN_TREE_STEP_KINDS = ["file", "copy_file"] as const;
+
+/**
+ * Install-root shape (trust boundary: the catalog file is external data). A binary install root
+ * is `/opt/<tool>` or a one-vendor-level nest (`/opt/google/chrome`) — the tool root is the unit
+ * the store replaces and the symlink flip aims at, so nothing deeper and nothing outside /opt may
+ * ever be declared as one.
+ */
+function validateInstallRoot(entry: CatalogEntry): void {
+	if (entry.source_type !== "binary") return;
+	const segments = entry.install_root.split("/");
+	// ["", "opt", "<tool>"] or ["", "opt", "<vendor>", "<tool>"]; no empty/dot segments.
+	const shapeOk =
+		(segments.length === 3 || segments.length === 4) && segments[1] === "opt" && segments.slice(2).every(okSegment);
+	if (!shapeOk) {
+		throw new CatalogError(
+			"bad_install_root",
+			`${entry.name}: install_root must be /opt/<tool> or /opt/<vendor>/<tool>, got ${entry.install_root}`,
+		);
+	}
+}
+
+function okSegment(segment: string): boolean {
+	return segment.length > 0 && segment !== "." && segment !== "..";
+}
+
+/** Fixup paths are install-tree-relative (trust boundary: the catalog file is external data). */
+function validateFixups(entry: CatalogEntry): void {
+	for (const fixup of entry.fixups ?? []) {
+		if (fixup.kind !== "setuid") continue;
+		if (fixup.path.startsWith("/") || fixup.path.split("/").includes("..")) {
+			throw new CatalogError(
+				"bad_fixup",
+				`${entry.name}: fixup path must stay inside the install tree, got ${fixup.path}`,
+			);
+		}
+	}
+}
 
 /**
  * Structural check of a deploy profile: each section may only use its own step kinds, and paths

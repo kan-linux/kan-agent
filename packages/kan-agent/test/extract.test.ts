@@ -8,12 +8,12 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CatalogEntry, ExtractSpec } from "../src/catalog.ts";
 import { extractArtifact } from "../src/extract.ts";
-import { makeStagingRoot, removeStagingRoot } from "./fixture.ts";
+import { makeFakeDeb, makeStagingRoot, removeStagingRoot } from "./fixture.ts";
 
 const base = join(import.meta.dirname, ".tmp");
 
@@ -164,6 +164,78 @@ describe("extractArtifact", () => {
 		expect(existsSync(join(result.contentDir, "usr", "share", "applications", "libreoffice-writer.desktop"))).toBe(
 			true,
 		);
+		removeStagingRoot(staging);
+	});
+
+	it("deb: the tree glob becomes the tree, the usr payload is kept, and the package version is read", async () => {
+		const artifact = makeFakeDeb(base, {
+			name: "chrome",
+			version: "158.0.8127.88-1",
+			files: {
+				"opt/google/chrome/chrome": "#!/bin/sh\necho chrome\n",
+				"opt/google/chrome/chrome-sandbox": "sandbox",
+				"opt/google/chrome/product_logo_256.png": "png",
+				"usr/share/applications/google-chrome.desktop": "[Desktop Entry]\n",
+			},
+			symlinks: { "usr/bin/google-chrome-stable": "/opt/google/chrome/google-chrome" },
+		});
+		const staging = makeStagingRoot(base, "extract-deb");
+		const result = await extractArtifact(
+			entryWith({ kind: "deb", tree_glob: "opt/google/chrome", usr_dir: "usr" }),
+			artifact,
+			staging,
+			"current",
+		);
+		expect(result.kind).toBe("ok");
+		if (result.kind !== "ok") return;
+		// The artifact is the rolling "current" link; the payload declares the real version.
+		expect(result.version).toBe("158.0.8127.88-1");
+		expect(existsSync(join(result.contentDir, "chrome"))).toBe(true);
+		expect(existsSync(join(result.contentDir, "usr", "share", "applications", "google-chrome.desktop"))).toBe(true);
+		// The launcher symlink is the deb's own absolute link and must survive as a symlink.
+		expect(readlinkSync(join(result.contentDir, "usr", "bin", "google-chrome-stable"))).toBe(
+			"/opt/google/chrome/google-chrome",
+		);
+		removeStagingRoot(staging);
+	});
+
+	it("setuid fixup: the sandbox keeps its setuid root bit", async () => {
+		const artifact = makeFakeDeb(base, {
+			name: "sandboxed",
+			version: "1.0",
+			files: { "opt/tool/chrome-sandbox": "sandbox" },
+		});
+		const staging = makeStagingRoot(base, "extract-setuid");
+		const result = await extractArtifact(
+			entryWith({ kind: "deb", tree_glob: "opt/tool", usr_dir: "usr" }, [
+				{ kind: "setuid", path: "chrome-sandbox" },
+			]),
+			artifact,
+			staging,
+			"1.0",
+		);
+		expect(result.kind).toBe("ok");
+		if (result.kind !== "ok") return;
+		expect(statSync(join(result.contentDir, "chrome-sandbox")).mode & 0o4755).toBe(0o4755);
+		expect(result.notes.join(" ")).toContain("setuid: chrome-sandbox");
+		removeStagingRoot(staging);
+	});
+
+	it("refuses a deb whose control metadata declares an unsafe version string", async () => {
+		const artifact = makeFakeDeb(base, {
+			name: "evilver",
+			version: "../../etc",
+			files: { "opt/tool/tool": "x" },
+		});
+		const staging = makeStagingRoot(base, "extract-evilver");
+		const result = await extractArtifact(
+			entryWith({ kind: "deb", tree_glob: "opt/tool", usr_dir: "usr" }),
+			artifact,
+			staging,
+			"current",
+		);
+		expect(result.kind).toBe("error");
+		if (result.kind === "error") expect(result.reason).toContain("unsafe version");
 		removeStagingRoot(staging);
 	});
 
