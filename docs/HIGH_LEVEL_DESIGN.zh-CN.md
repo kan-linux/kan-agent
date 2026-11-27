@@ -4,7 +4,7 @@
 |---|---|
 | 文档状态 | 草案（Draft） |
 | 日期 | 2026-11-22 |
-| 英文版本 | [HIGH_LEVEL_DESIGN.md](https://github.com/kan-linux/kan-agent/blob/kan-agent/docs/HIGH_LEVEL_DESIGN.md) |
+| 英文版本 | [HIGH_LEVEL_DESIGN.md](https://github.com/kan-linux/kan-agent/blob/master/docs/HIGH_LEVEL_DESIGN.md) |
 
 
 ## 1. 概述
