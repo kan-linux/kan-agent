@@ -117,7 +117,10 @@ const atomicDeployParams = Type.Object(
 	{
 		component: Type.String({ description: "Component name (must exist in the official component catalog)." }),
 		version: Type.String({ description: "Version being deployed." }),
-		artifact: Type.String({ description: "Path to build output (DESTDIR) or the fetched release package." }),
+		artifact: Type.String({
+			description:
+				"Path to build output (DESTDIR) or the fetched release package. For source_type=binary pass the `artifact` value repo_fetch reported.",
+		}),
 		verify_cmd: Type.Optional(
 			Type.String({
 				description:

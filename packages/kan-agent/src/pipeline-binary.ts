@@ -135,7 +135,8 @@ export async function repoFetchBinary(
 			`bytes: ${bytes}`,
 			`sha256: ${sha256}`,
 			`workspace: ${workspace}`,
-			...(reused ? ["artifact: reused existing fetch (no download)"] : []),
+			`artifact: ${dest}`,
+			...(reused ? ["artifact_reused: true (no download)"] : []),
 			`origin: official (resolved from the component catalog)`,
 		].join("\n"),
 		details: {
@@ -148,6 +149,7 @@ export async function repoFetchBinary(
 			bytes,
 			sha256,
 			workspace,
+			artifact: dest,
 			reused,
 			origin: "official",
 		},

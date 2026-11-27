@@ -129,8 +129,13 @@ async function untar(artifact: string, dest: string, extra: string[] = []): Prom
  * this is the last line of defense behind the official-source allowlist and install_audit.
  */
 async function assertSafeArchive(artifact: string): Promise<void> {
-	const { stdout } = await run("tar", ["-tf", artifact]);
-	for (const member of stdout.split("\n")) {
+	let listing: string;
+	try {
+		({ stdout: listing } = await run("tar", ["-tf", artifact]));
+	} catch {
+		throw new Error(`not a readable package archive: ${basename(artifact)}`);
+	}
+	for (const member of listing.split("\n")) {
 		if (!member) continue;
 		if (member.startsWith("/") || member.split("/").includes("..")) {
 			throw new Error(`unsafe archive member "${member}" (absolute or .. path)`);

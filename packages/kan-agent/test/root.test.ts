@@ -44,3 +44,27 @@ describe("assertSafeToRemove", () => {
 		expect(() => assertSafeToRemove(paths, "/staging/opt/not-there")).not.toThrow();
 	});
 });
+
+/**
+ * The live filesystem (empty root prefix) is where the deploy actually runs as root. The staging
+ * cases above cannot catch empty-root path bugs — a `join("", "opt")` is relative and silently
+ * fails every allowlist comparison against "/opt".
+ */
+describe("assertSafeToRemove on the live root", () => {
+	const live = new KanPaths("");
+
+	it("allows removing a tool root under /opt", () => {
+		expect(() => assertSafeToRemove(live, "/opt/go")).not.toThrow();
+		expect(() => assertSafeToRemove(live, "/opt/libreoffice26.8")).not.toThrow();
+	});
+
+	it("allows removing inside the live state dir", () => {
+		expect(() => assertSafeToRemove(live, "/var/lib/kan-agent/workspace/go")).not.toThrow();
+	});
+
+	it("still refuses the system roots and deep /opt paths", () => {
+		for (const target of ["/", "/opt", "/usr", "/etc", "/opt/go/bin"]) {
+			expect(() => assertSafeToRemove(live, target), target).toThrow(UnsafePathError);
+		}
+	});
+});

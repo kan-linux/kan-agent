@@ -210,9 +210,20 @@ describe("binary install pipeline", () => {
 		);
 		expect(second.kind).toBe("ok");
 		expect(second.details.reused).toBe(true);
-		expect(second.text).toContain("reused existing fetch");
+		expect(second.text).toContain("artifact_reused: true");
 		// The retry reports the same artifact facts as the first fetch.
 		expect(second.details.sha256).toBe(first.details.sha256);
+	});
+
+	it("reports the full artifact path for the deploy step to consume", async () => {
+		const outcome = await repoFetchBinary(
+			{ source_type: "binary", component: COMPONENT, ref: "1.0.1" },
+			paths,
+			catalog,
+		);
+		expect(outcome.kind).toBe("ok");
+		expect(outcome.details.artifact).toBe(`${outcome.details.workspace}/${outcome.details.tarball}`);
+		expect(outcome.text).toContain(`artifact: ${outcome.details.artifact}`);
 	});
 
 	it("rolls back the CONTENT to the previous generation when the health check fails", async () => {

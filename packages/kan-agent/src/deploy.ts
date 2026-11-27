@@ -12,10 +12,10 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { ComponentCatalog } from "./catalog.ts";
+import type { ComponentCatalog, ResolvedSource } from "./catalog.ts";
 import { extractArtifact } from "./extract.ts";
 import {
 	applyInTreeProfile,
@@ -92,15 +92,15 @@ export async function atomicDeployBinary(
 			`catalog entry "${args.component}" is source_type=${entry.source_type}; this deploy path is for binary`,
 		);
 	}
-	let version: string;
+	let resolved: ResolvedSource;
 	try {
-		version = catalog.resolve(args.component, args.version).version;
+		resolved = catalog.resolve(args.component, args.version);
 	} catch (e) {
 		return reject((e as Error).message);
 	}
-	if (!existsSync(args.artifact)) {
-		return reject(`artifact not found: ${args.artifact}`);
-	}
+	const version = resolved.version;
+	const artifact = resolveArtifact(resolved, args.artifact);
+	if (artifact.kind === "rejected") return reject(artifact.reason);
 	const rootError = requireWritableRoots(paths);
 	if (rootError) return reject(rootError);
 	const space = checkFreeSpace(paths, catalog.freeSpacePreflightMb);
@@ -111,7 +111,7 @@ export async function atomicDeployBinary(
 	rmSync(staging, { recursive: true, force: true });
 	mkdirSync(staging, { recursive: true });
 
-	const extracted = await extractArtifact(entry, args.artifact, staging, version);
+	const extracted = await extractArtifact(entry, artifact.path, staging, version);
 	if (extracted.kind === "error") {
 		assertSafeToRemove(paths, staging);
 		rmSync(staging, { recursive: true, force: true });
@@ -344,6 +344,33 @@ async function runVerify(verifyCmd: string, installRoot: string): Promise<{ outp
 		const err = e as Error & { stdout?: string; stderr?: string };
 		return { output: `${err.message}${err.stdout ?? ""}${err.stderr ?? ""}`.trim().slice(0, 400), passed: false };
 	}
+}
+
+/**
+ * The package file to extract. `artifact` is the file repo_fetch reported in its `artifact` field;
+ * a workspace directory is accepted and resolved to the fetched package inside it, because callers
+ * routinely hand back the workspace path instead of the file within — the intent is unambiguous and
+ * a wrong guess here would otherwise fail deep inside extraction.
+ */
+function resolveArtifact(
+	resolved: ResolvedSource,
+	artifact: string,
+): { kind: "file"; path: string } | { kind: "rejected"; reason: string } {
+	if (!existsSync(artifact)) {
+		return {
+			kind: "rejected",
+			reason: `artifact not found: ${artifact}. Pass the artifact value repo_fetch reported (its workspace joined with its tarball).`,
+		};
+	}
+	if (statSync(artifact).isFile()) return { kind: "file", path: artifact };
+	const candidate = join(artifact, resolved.tarball);
+	if (existsSync(candidate) && statSync(candidate).isFile()) {
+		return { kind: "file", path: candidate };
+	}
+	return {
+		kind: "rejected",
+		reason: `artifact must be the fetched package file; ${artifact} is a directory without ${resolved.tarball} in it. Pass the artifact value repo_fetch reported.`,
+	};
 }
 
 /** A verify binary inside the install root: a slash path as-is, a bare name in bin/ then at the root. */

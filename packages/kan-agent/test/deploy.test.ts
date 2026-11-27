@@ -7,7 +7,7 @@
  * deployed binary apart from any host binary of the same name.
  */
 
-import { readlinkSync } from "node:fs";
+import { mkdirSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ComponentCatalog } from "../src/catalog.ts";
@@ -63,6 +63,28 @@ describe("atomicDeployBinary", () => {
 		// The regression: this once reported the HOST tool's output because the stored binary had
 		// lost its execute bit and PATH lookup silently fell through to the host.
 		expect(outcome.text).toContain(DEPLOYED_MARKER);
+	});
+
+	it("resolves the fetched package when the artifact is the workspace directory", async () => {
+		const artifact = stageFetchedGo("go1.27.4.linux-amd64.tar.gz", DEPLOYED_MARKER);
+		const workspace = artifact.slice(0, artifact.lastIndexOf("/"));
+		const outcome = await atomicDeployBinary(
+			{ component: "go", version: "1.27.4", artifact: workspace },
+			paths,
+			catalog,
+		);
+		expect(outcome.kind).toBe("ok");
+		expect(readlinkSync(paths.installRoot("go"))).toContain("store");
+	});
+
+	it("rejects a directory artifact that does not hold the fetched package", async () => {
+		const artifact = stageFetchedGo("go1.27.4.linux-amd64.tar.gz", DEPLOYED_MARKER);
+		const workspace = artifact.slice(0, artifact.lastIndexOf("/"));
+		const other = join(workspace, "not-the-package");
+		mkdirSync(other, { recursive: true });
+		const outcome = await atomicDeployBinary({ component: "go", version: "1.27.4", artifact: other }, paths, catalog);
+		expect(outcome.kind).toBe("error");
+		expect(outcome.text).toContain("must be the fetched package file");
 	});
 
 	it("rejects a component that is not in the catalog", async () => {

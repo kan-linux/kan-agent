@@ -11,7 +11,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -125,6 +125,11 @@ export async function ensureLlm(options?: { baseUrl?: string; logPath?: string }
 	}
 
 	const port = preferred ?? (await freePort());
+	let logFd: number | undefined;
+	if (options?.logPath) {
+		mkdirSync(dirname(options.logPath), { recursive: true });
+		logFd = openSync(options.logPath, "a");
+	}
 	const child = spawn(serverPath, serverArgs(model, port), {
 		env: {
 			...process.env,
@@ -136,13 +141,12 @@ export async function ensureLlm(options?: { baseUrl?: string; logPath?: string }
 				.join(delimiter),
 			GGML_VK_ALLOW_SYSMEM_FALLBACK: "1",
 		},
-		stdio: ["ignore", "ignore", options?.logPath ? "pipe" : "ignore"],
+		// The log gets an inherited fd, not a pipe: a piped stdio handle keeps the parent's
+		// event loop alive and kan-agent would never exit back to the shell after its reply.
+		stdio: ["ignore", "ignore", logFd ?? "ignore"],
 		detached: true,
 	});
-	if (options?.logPath && child.stderr) {
-		mkdirSync(dirname(options.logPath), { recursive: true });
-		child.stderr.pipe(createWriteStream(options.logPath, { flags: "a" }));
-	}
+	if (logFd !== undefined) closeSync(logFd);
 	child.unref();
 
 	const stop = (): void => {

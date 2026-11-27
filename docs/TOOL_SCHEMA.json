@@ -152,7 +152,7 @@
             },
             "artifact": {
               "type": "string",
-              "description": "Path to build output (DESTDIR) or the fetched release package."
+              "description": "Path to build output (DESTDIR) or the fetched release package. For source_type=binary pass the `artifact` value repo_fetch reported."
             },
             "verify_cmd": {
               "type": "string",
