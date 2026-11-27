@@ -28,9 +28,16 @@ PROJECT_ROOT_PATH=${PWD}
 HOST_CPU_COUNTS=$(cat /proc/cpuinfo | grep "processor" | wc | awk '{print int($1)}')
 
 # The neighboring inference-engine project (ggml-hexagon) and its x86-linux build output,
-# produced by its scripts/build-run-ggmlvulkan-x86-linux.sh build.
-GGML_HEXA_PATH=${KAN_GGML_HEXA_PATH:-${PROJECT_ROOT_PATH}/../ggml-hexagon}
-GGML_HEXA_BIN=${KAN_GGML_HEXA_BIN:-${GGML_HEXA_PATH}/out/ggmlvulkan-x86-linux/bin}
+# produced by its scripts/build-run-ggmlvulkan-x86-linux.sh build. Convention over configuration:
+# an explicit override, a sibling checkout, or a clone inside this tree — all work.
+if [ -n "${KAN_GGMLHEXAGON_PATH:-}" ]; then
+    GGMLHEXAGON_PATH=${KAN_GGMLHEXAGON_PATH}
+elif [ -d "${PROJECT_ROOT_PATH}/../ggml-hexagon" ]; then
+    GGMLHEXAGON_PATH=${PROJECT_ROOT_PATH}/../ggml-hexagon
+else
+    GGMLHEXAGON_PATH=${PROJECT_ROOT_PATH}/ggml-hexagon
+fi
+GGMLHEXAGON_BIN=${KAN_GGMLHEXAGON_BIN:-${GGMLHEXAGON_PATH}/out/ggmlvulkan-x86-linux/bin}
 
 # Vulkan loader location: the kan-linux SDK component, else the SDK the ggml-hexagon build used.
 if [ -n "${KAN_VULKAN_LIB:-}" ]; then
@@ -38,7 +45,7 @@ if [ -n "${KAN_VULKAN_LIB:-}" ]; then
 elif [ -f /opt/vulkan/lib/libvulkan.so.1 ]; then
     VULKAN_SDK_LIB=/opt/vulkan/lib
 else
-    VULKAN_SDK_LIB=$(ls -d "${GGML_HEXA_PATH}"/prebuilts/Vulkan_SDK/*/x86_64/lib 2>/dev/null | head -1 || true)
+    VULKAN_SDK_LIB=$(ls -d "${GGMLHEXAGON_PATH}"/prebuilts/Vulkan_SDK/*/x86_64/lib 2>/dev/null | head -1 || true)
 fi
 
 OUT_PATH=${PROJECT_ROOT_PATH}/out
@@ -111,9 +118,14 @@ function setup_bun_path()
 
 function check_ggml_hexa_output()
 {
-    [ -x "${GGML_HEXA_BIN}/llama-server" ] || die "llama-server not found at ${GGML_HEXA_BIN}; build ggml-hexagon first (scripts/build-run-ggmlvulkan-x86-linux.sh build)"
+    [ -x "${GGMLHEXAGON_BIN}/llama-server" ] || die "llama-server not found at ${GGMLHEXAGON_BIN}
+Build the ggml-hexagon inference engine first (any of these layouts works):
+  git clone https://github.com/kan-linux/ggml-hexagon ../ggml-hexagon    # next to this repo, or
+  git clone https://github.com/kan-linux/ggml-hexagon ggml-hexagon      # inside this repo's root
+  then: cd <ggml-hexagon> && ./scripts/build-run-ggmlvulkan-x86-linux.sh build
+(or point KAN_GGMLHEXAGON_PATH / KAN_GGMLHEXAGON_BIN at an existing checkout)"
     [ -n "${VULKAN_SDK_LIB}" ] && [ -f "${VULKAN_SDK_LIB}/libvulkan.so.1" ] \
-        || die "libvulkan.so.1 not found (looked at KAN_VULKAN_LIB, /opt/vulkan/lib, ${GGML_HEXA_PATH}/prebuilts/Vulkan_SDK)"
+        || die "libvulkan.so.1 not found (looked at KAN_VULKAN_LIB, /opt/vulkan/lib, ${GGMLHEXAGON_PATH}/prebuilts/Vulkan_SDK)"
 }
 
 function build_kanagent()
@@ -159,7 +171,7 @@ function collect_runtime_deps()
         cp -L "${resolved}" "${dest}"
         printf "  bundled %s\n" "${needed}"
         collect_runtime_deps "${dest}"
-    done < <(LD_LIBRARY_PATH="${RELEASE_BIN}:${GGML_HEXA_BIN}:${VULKAN_SDK_LIB}" ldd "${target}")
+    done < <(LD_LIBRARY_PATH="${RELEASE_BIN}:${GGMLHEXAGON_BIN}:${VULKAN_SDK_LIB}" ldd "${target}")
 }
 
 function assemble_release_tree()
@@ -190,8 +202,8 @@ EOF
     printf "%s\n" "${VERSION}" > "${RELEASE_PATH}/config/VERSION"
 
     # llama-server runtime tree: the binary plus every non-system .so it resolves.
-    cp -L "${GGML_HEXA_BIN}/llama-server" "${RELEASE_BIN}/"
-    printf "collecting runtime shared libraries from ${GGML_HEXA_BIN} and ${VULKAN_SDK_LIB}...\n"
+    cp -L "${GGMLHEXAGON_BIN}/llama-server" "${RELEASE_BIN}/"
+    printf "collecting runtime shared libraries from ${GGMLHEXAGON_BIN} and ${VULKAN_SDK_LIB}...\n"
     collect_runtime_deps "${RELEASE_BIN}/llama-server"
     [ -e "${RELEASE_BIN}/libvulkan.so.1" ] \
         || die "libvulkan.so.1 was not bundled; the tree would depend on a system Vulkan loader"
@@ -310,9 +322,9 @@ function show_usage()
     echo "  llm/        place exactly one .gguf model here"
     echo ""
     echo "Env overrides:"
-    echo "  KAN_GGML_HEXA_PATH   ggml-hexagon checkout   (default: ${PROJECT_ROOT_PATH}/../ggml-hexagon)"
-    echo "  KAN_GGML_HEXA_BIN    its llama-server bin dir (default: <hexa>/out/ggmlvulkan-x86-linux/bin)"
-    echo "  KAN_VULKAN_LIB       dir holding libvulkan.so.1 (default: /opt/vulkan/lib, then <hexa>/prebuilts)"
+    echo "  KAN_GGMLHEXAGON_PATH   ggml-hexagon checkout (default: ../ggml-hexagon or ./ggml-hexagon)"
+    echo "  KAN_GGMLHEXAGON_BIN    its llama-server bin dir (default: <hexagon>/out/ggmlvulkan-x86-linux/bin)"
+    echo "  KAN_VULKAN_LIB         dir holding libvulkan.so.1 (default: /opt/vulkan/lib, then <hexagon>/prebuilts)"
     echo ""
     echo "Examples:"
     echo "  $0 build"

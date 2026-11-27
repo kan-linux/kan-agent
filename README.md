@@ -22,6 +22,31 @@ No conventional package manager required. Local inference, reproducible builds, 
 | Kan-Agent Tool Schema | [TOOL_SCHEMA.json](docs/TOOL_SCHEMA.json) |
 
 
+## Build from source
+
+Kan-Agent runs on a managed llama-server runtime built from the sibling
+[ggml-hexagon](https://github.com/kan-linux/ggml-hexagon) project. Clone both repositories —
+side by side or the engine inside this tree, either layout works:
+
+```sh
+git clone https://github.com/kan-linux/kan-agent
+git clone https://github.com/kan-linux/ggml-hexagon
+cd ggml-hexagon && ./scripts/build-run-ggmlvulkan-x86-linux.sh build && cd ../kan-agent
+./build.sh build
+```
+
+`./build.sh build` builds kan-agent and assembles the self-contained release tree in `out/kan-agent`
+(runnable in place or installable with `sudo ./build.sh deploy` to `/opt/kan-agent`). Place exactly
+one `.gguf` model in its `llm/` directory, then:
+
+```sh
+sudo /opt/kan-agent/kan-agent "帮我安装go"
+```
+
+`./build.sh help` lists every verb. `KAN_GGMLHEXAGON_PATH` / `KAN_GGMLHEXAGON_BIN` point the build
+at an engine checkout in any other location.
+
+
 ## Acknowledgements
 - Thanks to [llama.cpp](https://github.com/ggml-org/llama.cpp)
 - Thanks to [Pi](https://github.com/earendil-works/pi)
