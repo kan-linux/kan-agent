@@ -59,13 +59,10 @@ at an engine checkout in any other location.
 ## Branches
 
 - master
-  https://github.com/kan-linux/kan-agent/tree/master, track [upstream pi project](https://github.com/earendil-works/pi).
+  https://github.com/kan-linux/kan-agent/tree/master, the default branch
 
-- kan-agent
-  https://github.com/kan-linux/kan-agent/tree/kan-agent, the default branch
-
-- backup
-  [https://github.com/kan-linux/kan-agent/tree/backup](https://github.com/kan-linux/kan-agent/tree/backup), backup branch
+- initial
+  [https://github.com/kan-linux/kan-agent/tree/initial](https://github.com/kan-linux/kan-agent/tree/initial), initial branch
 
 
 ## Trademarks
