@@ -71,11 +71,12 @@ function serverArgs(model: string, port: number): string[] {
 	];
 }
 
-/** The llama-server binary: KAN_AGENT_LLAMA_SERVER -> /opt/kan-agent/bin/llama-server -> PATH. */
+/** The llama-server binary: KAN_AGENT_LLAMA_SERVER -> /opt/kan-agent/bin -> <release tree>/bin -> PATH. */
 export function findLlamaServer(): string | undefined {
 	const candidates = [
 		process.env.KAN_AGENT_LLAMA_SERVER,
 		"/opt/kan-agent/bin/llama-server",
+		join(dirname(process.execPath), "bin", "llama-server"),
 		...(process.env.PATH?.split(delimiter).map((dir) => join(dir, "llama-server")) ?? []),
 	].filter((p): p is string => p !== undefined);
 	return candidates.find((p) => existsSync(p) && statSync(p).isFile());
@@ -83,19 +84,22 @@ export function findLlamaServer(): string | undefined {
 
 /** The single *.gguf under the model dir (KAN_AGENT_LLM_DIR -> /opt/kan-agent/llm). */
 export function findModel(): string | undefined {
-	const dir = process.env.KAN_AGENT_LLM_DIR ?? DEFAULT_LLM_DIR;
-	if (!existsSync(dir)) return undefined;
-	const models = readdirSync(dir)
-		.filter((name) => name.endsWith(".gguf"))
-		.sort()
-		.map((name) => join(dir, name));
-	if (models.length === 0) return undefined;
-	if (models.length > 1) {
-		throw new Error(
-			`${dir} holds ${models.length} .gguf files; keep exactly one (found: ${models.map((m) => m.split("/").pop()).join(", ")})`,
-		);
+	const candidates = [process.env.KAN_AGENT_LLM_DIR ?? DEFAULT_LLM_DIR, join(dirname(process.execPath), "llm")];
+	for (const dir of candidates) {
+		if (!existsSync(dir)) continue;
+		const models = readdirSync(dir)
+			.filter((name) => name.endsWith(".gguf"))
+			.sort()
+			.map((name) => join(dir, name));
+		if (models.length === 0) continue;
+		if (models.length > 1) {
+			throw new Error(
+				`${dir} holds ${models.length} .gguf files; keep exactly one (found: ${models.map((m) => m.split("/").pop()).join(", ")})`,
+			);
+		}
+		return models[0];
 	}
-	return models[0];
+	return undefined;
 }
 
 /**
