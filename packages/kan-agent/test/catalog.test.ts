@@ -48,6 +48,15 @@ describe("ComponentCatalog.resolve", () => {
 		expect(resolved.sha256).toBe(resolved.tarball === "twovariant-fast.tar.gz" ? "f".repeat(64) : "b".repeat(64));
 	});
 
+	it("gives bun's probe-selected build its own pinned hash from the catalog", () => {
+		const resolved = catalog.resolve("bun");
+		const expected =
+			resolved.tarball === "bun-linux-x64.zip"
+				? "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913"
+				: "c678040f14fe0440eb839d37cbd0ce4c051a32da72806ac97de6a6aab6bf728f";
+		expect(resolved.sha256).toBe(expected);
+	});
+
 	it("rejects a component that is not in the catalog", () => {
 		expect(() => catalog.resolve("definitely-not-a-component")).toThrow(CatalogError);
 		expect(() => catalog.resolve("definitely-not-a-component")).toThrow(/not in the official component catalog/);
@@ -86,9 +95,9 @@ describe("ComponentCatalog.resolve", () => {
 });
 
 describe("catalog coverage of install-prebuilts.sh", () => {
-	it("carries all 8 components the script installs", () => {
+	it("carries every catalog component", () => {
 		expect(catalog.names().sort()).toEqual(
-			["firefox", "go", "jdk", "libreoffice", "mimocode", "node", "rust", "vulkan"].sort(),
+			["bun", "firefox", "go", "jdk", "libreoffice", "mimocode", "node", "rust", "vulkan"].sort(),
 		);
 	});
 
@@ -104,7 +113,7 @@ describe("catalog coverage of install-prebuilts.sh", () => {
 			.map((e) => e.name)
 			.sort();
 		expect(inImage).toEqual(["firefox", "jdk", "mimocode", "node"]);
-		expect(optional).toEqual(["go", "libreoffice", "rust", "vulkan"]);
+		expect(optional).toEqual(["bun", "go", "libreoffice", "rust", "vulkan"]);
 	});
 
 	it("resolves every default version to an official distribution host", () => {
@@ -116,6 +125,7 @@ describe("catalog coverage of install-prebuilts.sh", () => {
 			vulkan: "https://sdk.lunarg.com/sdk/download/",
 			jdk: "https://download.oracle.com/java/",
 			node: "https://nodejs.org/dist/",
+			bun: "https://github.com/oven-sh/bun/releases/download/",
 			libreoffice: "https://appimages.libreitalia.org/",
 		};
 		for (const [name, prefix] of Object.entries(hosts)) {

@@ -210,6 +210,38 @@
       "dependencies": []
     },
     {
+      "name": "bun",
+      "description": "Bun JavaScript runtime and bundler (official prebuilt binary; the kan-agent build toolchain).",
+      "source_type": "binary",
+      "origin": "official",
+      "image_class": "optional",
+      "tarball_pattern": "bun-{target}.zip",
+      "url_pattern": "https://github.com/oven-sh/bun/releases/download/bun-v{version}/{tarball}",
+      "versions": ["1.4.2"],
+      "default_version": "1.4.2",
+      "install_root": "/opt/bun",
+      "extract_root": "/opt/bun",
+      "extract": { "kind": "zip_topdir" },
+      "target_probe": {
+        "kind": "cpu_flag",
+        "flag": "avx2",
+        "if_present": "linux-x64",
+        "if_absent": "linux-x64-baseline"
+      },
+      "version_prefixes": ["bun-v", "bun-", "v"],
+      "verify_cmd": "bun --version",
+      "config_placement": ["/usr/local/bin/bun (PATH entry)"],
+      "deploy_profile": {
+        "in_tree": [],
+        "system": [{ "kind": "symlink", "from": "bun", "to": "/usr/local/bin/bun" }]
+      },
+      "dependencies": [],
+      "sha256": {
+        "bun-linux-x64.zip": "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913",
+        "bun-linux-x64-baseline.zip": "c678040f14fe0440eb839d37cbd0ce4c051a32da72806ac97de6a6aab6bf728f"
+      }
+    },
+    {
       "name": "libreoffice",
       "description": "LibreOffice basic AppImage (official LibreItalia build); draw/base/startcenter/impress menu entries are dropped because they fail to start in this build.",
       "source_type": "binary",

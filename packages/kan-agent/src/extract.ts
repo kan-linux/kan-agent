@@ -86,6 +86,19 @@ async function extractByKind(
 			renameSync(file, target);
 			return contentDir;
 		}
+		case "zip_topdir": {
+			await assertSafeZipArchive(artifact);
+			const work = join(staging, "work");
+			mkdirSync(work, { recursive: true });
+			try {
+				await run("unzip", ["-q", artifact, "-d", work]);
+			} catch (e) {
+				throw new Error(`could not extract ${artifact}: ${(e as Error).message}`);
+			}
+			const top = singleChildDir(work);
+			if (!top) throw new Error(`${basename(artifact)}: expected a single top-level directory`);
+			return top;
+		}
 		case "appimage": {
 			const work = join(staging, "work");
 			mkdirSync(work, { recursive: true });
@@ -135,10 +148,25 @@ async function assertSafeArchive(artifact: string): Promise<void> {
 	} catch {
 		throw new Error(`not a readable package archive: ${basename(artifact)}`);
 	}
-	for (const member of listing.split("\n")) {
+	assertSafeMembers(artifact, listing.split("\n"));
+}
+
+/** The same member guard for ZIP packages, via unzip's name listing. */
+async function assertSafeZipArchive(artifact: string): Promise<void> {
+	let listing: string;
+	try {
+		({ stdout: listing } = await run("unzip", ["-Z1", artifact]));
+	} catch {
+		throw new Error(`not a readable package archive: ${basename(artifact)}`);
+	}
+	assertSafeMembers(artifact, listing.split("\n"));
+}
+
+function assertSafeMembers(artifact: string, members: string[]): void {
+	for (const member of members) {
 		if (!member) continue;
 		if (member.startsWith("/") || member.split("/").includes("..")) {
-			throw new Error(`unsafe archive member "${member}" (absolute or .. path)`);
+			throw new Error(`unsafe archive member "${member}" in ${basename(artifact)} (absolute or .. path)`);
 		}
 	}
 }

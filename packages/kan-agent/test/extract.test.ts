@@ -167,6 +167,39 @@ describe("extractArtifact", () => {
 		removeStagingRoot(staging);
 	});
 
+	it("zip_topdir: the single top directory becomes the tree", async () => {
+		const sources = join(base, "zip-src");
+		mkdirSync(join(sources, "bun-linux-x64"), { recursive: true });
+		writeFileSync(join(sources, "bun-linux-x64", "bun"), "binary", "utf8");
+		const artifact = join(base, "bun.zip");
+		rmSync(artifact, { force: true });
+		execFileSync("zip", ["-q", "-r", artifact, "bun-linux-x64"], { cwd: sources, stdio: "pipe" });
+		const staging = makeStagingRoot(base, "extract-zip");
+		const result = await extractArtifact(entryWith({ kind: "zip_topdir" }), artifact, staging, "1.0");
+		expect(result.kind).toBe("ok");
+		if (result.kind !== "ok") return;
+		expect(readdirSync(result.contentDir)).toEqual(["bun"]);
+		removeStagingRoot(staging);
+		rmSync(sources, { recursive: true, force: true });
+	});
+
+	it("refuses zip archives with parent-escaping members", async () => {
+		const artifact = join(base, "evil.zip");
+		rmSync(artifact, { force: true });
+		execFileSync(
+			"python3",
+			["-c", 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.writestr("../evil","x")', artifact],
+			{
+				stdio: "pipe",
+			},
+		);
+		const staging = makeStagingRoot(base, "extract-evil-zip");
+		const result = await extractArtifact(entryWith({ kind: "zip_topdir" }), artifact, staging, "1.0");
+		expect(result.kind).toBe("error");
+		if (result.kind === "error") expect(result.reason).toContain("unsafe archive member");
+		removeStagingRoot(staging);
+	});
+
 	it("rust_std_merge: rust-std is merged into the rustc sysroot", async () => {
 		const artifact = makeTarball("rust.tar.gz", {
 			"rust-1.0-x86_64/rustc/bin/rustc": "binary",

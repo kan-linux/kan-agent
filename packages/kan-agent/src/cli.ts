@@ -60,7 +60,10 @@ Options:
 /** The kan-agent version: the release tree's config/VERSION, else the source package.json. */
 function version(): string {
 	const here = dirname(fileURLToPath(import.meta.url));
-	for (const candidate of [join(dirname(process.execPath), "config", "VERSION"), join(here, "..", "config", "VERSION")]) {
+	for (const candidate of [
+		join(dirname(process.execPath), "config", "VERSION"),
+		join(here, "..", "config", "VERSION"),
+	]) {
 		if (existsSync(candidate)) return readFileSync(candidate, "utf8").trim();
 	}
 	try {

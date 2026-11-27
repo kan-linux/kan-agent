@@ -29,6 +29,7 @@ Kan-Agent runs on a managed llama-server runtime built from the sibling
 side by side or the engine inside this tree, either layout works:
 
 ```sh
+npm install -g bun      # the only extra build tool (or: curl -fsSL https://bun.sh/install | bash)
 git clone https://github.com/kan-linux/kan-agent
 git clone https://github.com/kan-linux/ggml-hexagon
 cd ggml-hexagon && ./scripts/build-run-ggmlvulkan-x86-linux.sh build && cd ../kan-agent

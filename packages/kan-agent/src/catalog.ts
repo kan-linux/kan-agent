@@ -29,6 +29,8 @@ export type ExtractSpec =
 	| { kind: "tar_subdir"; subdir: string }
 	/** The tarball root holds a single file, placed at `target` inside the tree (mimocode). */
 	| { kind: "tar_single_file"; target: string }
+	/** A ZIP with a single top-level directory; its contents become the tree (bun). */
+	| { kind: "zip_topdir" }
 	/** An AppImage: `--appimage-extract`, the `tree_glob` directory's contents become the tree,
 	 *  and `usr_dir` is preserved inside the tree so deploy profiles can place it. */
 	| { kind: "appimage"; tree_glob: string; usr_dir: string };

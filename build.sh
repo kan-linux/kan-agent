@@ -113,7 +113,13 @@ function setup_bun_path()
     if [ -x "${HOME}/.bun/bin/bun" ]; then
         export PATH="${HOME}/.bun/bin:${PATH}"
     fi
-    check_command_in_host bun
+    if ! command -v bun > /dev/null 2>&1; then
+        die "bun not found. Install it first (any one):
+  npm install -g bun                  (node is part of the Kan-Linux image)
+  curl -fsSL https://bun.sh/install | bash
+  sudo kan-agent \"install bun\"       (from an installed release tree)"
+    fi
+    printf "bun is available on host machine\n\n"
 }
 
 function check_ggml_hexa_output()
