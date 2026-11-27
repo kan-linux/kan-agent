@@ -15,7 +15,7 @@
  * state directory and the /opt symlink change after a deploy.
  */
 
-import { existsSync, statfsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, statfsSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 
 export class UnsafePathError extends Error {}
@@ -146,16 +146,30 @@ export function checkFreeSpace(paths: KanPaths, needMb: number): FreeSpaceCheck 
 }
 
 /**
- * Install-prebuilts.sh requires root to install. A live root (no PI_KAN_ROOT prefix) is a real
- * system, so writes to /opt and /etc need root; a staging root is a directory the user already
- * owns and runs unprivileged.
+ * Write access is the privilege boundary, not the uid: kan-linux ships /opt user-writable, and a
+ * root-owned /var/lib/kan-agent can be relaxed per install. Refuse only when a root we must write
+ * is genuinely not writable, naming the path — the same failure would otherwise surface later as
+ * a raw EACCES mid-deploy. install-prebuilts.sh required root; this is the equivalent gate, judged
+ * by the filesystem instead of id -u.
  */
-export function requireRootForLiveRoot(paths: KanPaths): string | undefined {
-	if (paths.root !== "") return undefined;
-	if (typeof process.getuid === "function" && process.getuid() !== 0) {
-		return "must run as root to deploy to the live filesystem (e.g. sudo kan-agent ...)";
+export function requireWritableRoots(paths: KanPaths): string | undefined {
+	for (const dir of [join(paths.root, "/opt"), paths.stateDir]) {
+		if (!writableTarget(dir)) {
+			return `cannot write ${dir}: install/update needs write access there (on a stock system /opt and /var are root-only — run with sudo, e.g. sudo kan-agent ...)`;
+		}
 	}
 	return undefined;
+}
+
+/** Whether `path` or, when it does not exist yet, its nearest existing ancestor is writable. */
+function writableTarget(path: string): boolean {
+	const probe = existsSync(path) ? path : nearestExisting(path);
+	try {
+		accessSync(probe, constants.W_OK);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**

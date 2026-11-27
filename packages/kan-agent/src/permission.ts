@@ -41,6 +41,10 @@ export function registerPermissionGate(pi: ExtensionAPI): () => void {
 /**
  * Ask the user to confirm a high-risk call, or block it when no confirmation UI exists.
  * The parsed arguments are shown as-is: the user confirms exactly what the model tried to run.
+ *
+ * A headless run (`-p`) has no dialog, so a high-risk call is blocked by default — unless the run
+ * was pre-authorized with `--yes` (KAN_AGENT_ASSUME_YES). That flag is the HLD §7 "策略 allowlist"
+ * path: the human's explicit run-level decision stands in for per-call confirmation.
  */
 async function adjudicate(
 	summary: string,
@@ -48,7 +52,11 @@ async function adjudicate(
 	ctx: ExtensionContext,
 ): Promise<ToolCallEventResult | undefined> {
 	if (!ctx.hasUI) {
-		return { block: true, reason: `Blocked: ${summary} requires confirmation, and no confirmation UI is available.` };
+		if (process.env.KAN_AGENT_ASSUME_YES === "1") return undefined;
+		return {
+			block: true,
+			reason: `Blocked: ${summary} requires confirmation, and no confirmation UI is available. Re-run with --yes to pre-authorize this run's high-risk tools.`,
+		};
 	}
 	const message = `${summary}\n\nArguments: ${JSON.stringify(args)}\n\nAllow this call?`;
 	const confirmed = await ctx.ui.confirm("Kan-Agent permission gate", message);

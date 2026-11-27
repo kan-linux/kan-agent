@@ -15,7 +15,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CatalogError, ComponentCatalog, ResolvedSource } from "./catalog.ts";
 import { fetchToFile } from "./fetch.ts";
-import { checkFreeSpace, type KanPaths, requireRootForLiveRoot } from "./root.ts";
+import { checkFreeSpace, type KanPaths, requireWritableRoots } from "./root.ts";
 
 export type PipelineOutcome =
 	| { kind: "ok"; text: string; details: Record<string, unknown> }
@@ -64,7 +64,7 @@ export async function repoFetchBinary(
 		};
 	}
 
-	const rootError = requireRootForLiveRoot(paths);
+	const rootError = requireWritableRoots(paths);
 	if (rootError) {
 		return {
 			kind: "error",

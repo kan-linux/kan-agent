@@ -6,12 +6,62 @@
  * `kan-agent "<request>"` reaches the full tool layer — that is the LiveISO user experience
  * (HLD §4.1: 一条命令开箱即用). pi's agent loop and session core are untouched; only
  * `MainOptions.extensionFactories` is filled in.
+ *
+ * Before pi starts, the managed llama-server runtime is brought up (HLD §4.3) and the agent
+ * dir's models.json is pointed at it, so no environment setup is needed. Own flags:
+ *   --yes      pre-authorize high-risk tools for this run (headless -p has no confirm UI)
+ *   --no-llm   do not manage llama-server; use the agent dir's models.json as-is
  */
 
-import { type InlineExtension, type MainOptions, main } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type InlineExtension, type MainOptions, main } from "@earendil-works/pi-coding-agent";
 import kanAgentExtension from "./extension.ts";
+import { ensureLlm, seedModelsJson } from "./llm.ts";
 
 const extensionFactories: InlineExtension[] = [{ name: "kan-agent", factory: kanAgentExtension, builtin: true }];
 
+/** Flags kan-agent handles itself; stripped so pi's parser never sees them. */
+function takeOwnFlags(argv: string[]): { args: string[]; assumeYes: boolean; noLlm: boolean } {
+	const args: string[] = [];
+	let assumeYes = false;
+	let noLlm = false;
+	for (const arg of argv) {
+		if (arg === "--yes") {
+			assumeYes = true;
+			continue;
+		}
+		if (arg === "--no-llm") {
+			noLlm = true;
+			continue;
+		}
+		args.push(arg);
+	}
+	return { args, assumeYes, noLlm };
+}
+
+/** Help and listing runs must not load a multi-gigabyte model. */
+function wantsModel(args: string[]): boolean {
+	const quiet = new Set(["-h", "--help", "--version", "-v", "--list-models"]);
+	return !args.some((a) => quiet.has(a));
+}
+
+const { args, assumeYes, noLlm } = takeOwnFlags(process.argv.slice(2));
+
+// Run-level pre-authorization for high-risk tools in headless runs: the permission gate reads it.
+// Interactive runs still confirm in the dialog either way.
+if (assumeYes) {
+	process.env.KAN_AGENT_ASSUME_YES = "1";
+}
+
+if (!noLlm && process.env.KAN_AGENT_NO_AUTO_LLM !== "1" && wantsModel(args)) {
+	const agentDir = getAgentDir();
+	try {
+		const llm = await ensureLlm({ logPath: `${agentDir}/llama-server.log` });
+		seedModelsJson(llm.baseUrl, agentDir);
+	} catch (e) {
+		// Fall back to whatever models.json the agent dir already holds.
+		console.error(`[kan-agent] managed llama-server unavailable: ${(e as Error).message}`);
+	}
+}
+
 const options: MainOptions = { extensionFactories };
-main(process.argv.slice(2), options);
+main(args, options);

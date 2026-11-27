@@ -51,3 +51,4 @@ google-ai-qa.txt
 install-prebuilts.sh
 llm
 *.gguf
+bin/

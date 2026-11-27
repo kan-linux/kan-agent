@@ -25,7 +25,7 @@ import {
 	runHooks,
 	writeSystemConfig,
 } from "./profile.ts";
-import { assertSafeToRemove, checkFreeSpace, type KanPaths, requireRootForLiveRoot } from "./root.ts";
+import { assertSafeToRemove, checkFreeSpace, type KanPaths, requireWritableRoots } from "./root.ts";
 import { commitToStore, flipSymlink, type GenerationRecord, GenerationStore, makeWritable } from "./store.ts";
 
 const run = promisify(execFile);
@@ -101,7 +101,7 @@ export async function atomicDeployBinary(
 	if (!existsSync(args.artifact)) {
 		return reject(`artifact not found: ${args.artifact}`);
 	}
-	const rootError = requireRootForLiveRoot(paths);
+	const rootError = requireWritableRoots(paths);
 	if (rootError) return reject(rootError);
 	const space = checkFreeSpace(paths, catalog.freeSpacePreflightMb);
 	if (space.kind === "failed") return reject(space.reason);
