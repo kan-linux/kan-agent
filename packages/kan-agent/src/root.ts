@@ -114,7 +114,10 @@ export function assertSafeToRemove(paths: KanPaths, target: string): void {
 	}
 
 	const insideState = normalized === paths.stateDir || normalized.startsWith(`${paths.stateDir}${sep}`);
-	const underOpt = normalized.startsWith(`${join(paths.root, "opt")}${sep}`);
+	// Under /opt only a tool root itself may be removed (install-prebuilts.sh's per-tool
+	// allowlist), never an arbitrary depth and never /opt itself: /opt/<tool> is the unit the
+	// store replaces. With root on a live system this is the hard boundary for rm -rf.
+	const underOpt = dirname(normalized) === join(paths.root, "opt");
 	if (!insideState && !underOpt) {
 		throw new UnsafePathError(`safe_rm_rf: refusing path outside allowlist: ${target}`);
 	}

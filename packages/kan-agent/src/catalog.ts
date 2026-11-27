@@ -331,6 +331,14 @@ function validateDeployProfile(entry: CatalogEntry): void {
 				`${entry.name}: deploy_profile.system step "${step.kind}" must use a root-absolute path, got ${offending}`,
 			);
 		}
+		// Deletion is bounded tighter than write placement: only menu entries under
+		// /usr/share/applications are ever pruned (LibreOffice's broken .desktop files).
+		if (step.kind === "delete_matching" && !step.dir.startsWith("/usr/share/")) {
+			throw new CatalogError(
+				"bad_deploy_profile",
+				`${entry.name}: delete_matching is bounded to /usr/share/ (got ${step.dir})`,
+			);
+		}
 	}
 }
 

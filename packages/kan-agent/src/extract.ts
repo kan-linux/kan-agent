@@ -116,9 +116,25 @@ async function extractByKind(
 async function untar(artifact: string, dest: string, extra: string[] = []): Promise<void> {
 	mkdirSync(dest, { recursive: true });
 	try {
+		await assertSafeArchive(artifact);
 		await run("tar", ["-xf", artifact, "-C", dest, ...extra]);
 	} catch (e) {
 		throw new Error(`could not extract ${artifact}: ${(e as Error).message}`);
+	}
+}
+
+/**
+ * Refuse archives with absolute or parent-escaping members (path traversal). The pipeline runs as
+ * root on a live system, so a crafted tarball must never write outside the staging directory:
+ * this is the last line of defense behind the official-source allowlist and install_audit.
+ */
+async function assertSafeArchive(artifact: string): Promise<void> {
+	const { stdout } = await run("tar", ["-tf", artifact]);
+	for (const member of stdout.split("\n")) {
+		if (!member) continue;
+		if (member.startsWith("/") || member.split("/").includes("..")) {
+			throw new Error(`unsafe archive member "${member}" (absolute or .. path)`);
+		}
 	}
 }
 

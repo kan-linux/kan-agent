@@ -10,7 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { rename, rm, stat } from "node:fs/promises";
+import { readFile, rename, rm, stat } from "node:fs/promises";
 
 export type FetchOutcome = { kind: "fetched"; bytes: number; sha256: string } | { kind: "failed"; reason: string };
 
@@ -105,7 +105,11 @@ async function attemptOnce(url: string, part: string, options: FetchOptions): Pr
 
 async function hashFile(path: string): Promise<string> {
 	const hash = createHash("sha256");
-	const { readFile } = await import("node:fs/promises");
 	hash.update(await readFile(path));
 	return hash.digest("hex");
+}
+
+/** The sha256 of a file on disk, for reuse checks against a pinned catalog hash. */
+export async function sha256File(path: string): Promise<string> {
+	return await hashFile(path);
 }

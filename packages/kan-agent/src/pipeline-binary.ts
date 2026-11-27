@@ -11,10 +11,11 @@
  * caller-supplied root instead of touching the live /opt.
  */
 
+import { existsSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CatalogError, ComponentCatalog, ResolvedSource } from "./catalog.ts";
-import { fetchToFile } from "./fetch.ts";
+import { fetchToFile, sha256File } from "./fetch.ts";
 import { checkFreeSpace, type KanPaths, requireWritableRoots } from "./root.ts";
 
 export type PipelineOutcome =
@@ -54,7 +55,7 @@ export async function repoFetchBinary(
 	if (args.url) {
 		return {
 			kind: "error",
-			text: `STATUS: REJECTED\nstep: repo_fetch\noutcome: source_type=binary does not accept a caller-supplied url. The download address is resolved from the official component catalog entry for "${args.component}".`,
+			text: `STATUS: REJECTED\nstep: repo_fetch\noutcome: source_type=binary does not accept a caller-supplied url. The download address is resolved from the official component catalog entry for "${args.component}".\nRetry with source_type and component only; omit url.`,
 			details: {
 				status: "rejected",
 				reason: "url_not_acceptable_for_binary",
@@ -97,13 +98,29 @@ export async function repoFetchBinary(
 	await mkdir(workspace, { recursive: true });
 	const dest = join(workspace, resolved.tarball);
 
-	const outcome = await fetchToFile(resolved.url, dest, { sha256: resolved.sha256 });
-	if (outcome.kind === "failed") {
-		return {
-			kind: "error",
-			text: `STATUS: FAILED\nstep: repo_fetch\noutcome: ${outcome.reason}`,
-			details: { status: "failed", reason: outcome.reason, url: resolved.url },
-		};
+	// A retry of a fetch that already succeeded must not re-download tens of MB (model-level
+	// retries after a confusing tool result should cost nothing). A pinned sha256 is re-verified
+	// before reuse; an unpinned one trusts the earlier fetch — dest only ever holds a complete
+	// download, never a partial.
+	let bytes: number;
+	let sha256: string;
+	let reused = false;
+	const existing = await reusableArtifact(dest, resolved.sha256);
+	if (existing !== undefined) {
+		bytes = existing.bytes;
+		sha256 = existing.sha256;
+		reused = true;
+	} else {
+		const outcome = await fetchToFile(resolved.url, dest, { sha256: resolved.sha256 });
+		if (outcome.kind === "failed") {
+			return {
+				kind: "error",
+				text: `STATUS: FAILED\nstep: repo_fetch\noutcome: ${outcome.reason}`,
+				details: { status: "failed", reason: outcome.reason, url: resolved.url },
+			};
+		}
+		bytes = outcome.bytes;
+		sha256 = outcome.sha256;
 	}
 
 	return {
@@ -115,9 +132,10 @@ export async function repoFetchBinary(
 			`version: ${resolved.version}`,
 			`url: ${resolved.url}`,
 			`tarball: ${resolved.tarball}`,
-			`bytes: ${outcome.bytes}`,
-			`sha256: ${outcome.sha256}`,
+			`bytes: ${bytes}`,
+			`sha256: ${sha256}`,
 			`workspace: ${workspace}`,
+			...(reused ? ["artifact: reused existing fetch (no download)"] : []),
 			`origin: official (resolved from the component catalog)`,
 		].join("\n"),
 		details: {
@@ -127,12 +145,26 @@ export async function repoFetchBinary(
 			version: resolved.version,
 			url: resolved.url,
 			tarball: resolved.tarball,
-			bytes: outcome.bytes,
-			sha256: outcome.sha256,
+			bytes,
+			sha256,
 			workspace,
+			reused,
 			origin: "official",
 		},
 	};
+}
+
+/** A complete artifact from an earlier fetch, when it is safe to reuse instead of re-downloading. */
+async function reusableArtifact(
+	dest: string,
+	pinnedSha256: string | undefined,
+): Promise<{ bytes: number; sha256: string } | undefined> {
+	if (!existsSync(dest)) return undefined;
+	const bytes = statSync(dest).size;
+	if (bytes === 0) return undefined;
+	const sha256 = await sha256File(dest);
+	if (pinnedSha256 && pinnedSha256 !== sha256) return undefined;
+	return { bytes, sha256 };
 }
 
 /**

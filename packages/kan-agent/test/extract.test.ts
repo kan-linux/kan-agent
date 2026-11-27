@@ -195,4 +195,26 @@ describe("extractArtifact", () => {
 		expect(result.kind).toBe("error");
 		removeStagingRoot(staging);
 	});
+
+	it("refuses archives with absolute or parent-escaping members", async () => {
+		// GNU tar strips these on create but keeps them in the member list with -P — exactly the
+		// crafted shape the guard must reject before extraction (the pipeline runs as root).
+		const sources = join(base, "evil-src");
+		mkdirSync(join(sources, "nested"), { recursive: true });
+		writeFileSync(join(sources, "nested", "payload"), "evil", "utf8");
+		for (const [name, cwd, member] of [
+			["evil-abs.tar.gz", base, join(sources, "nested", "payload")],
+			["evil-dotdot.tar.gz", join(sources, "nested"), "../nested/payload"],
+		] as const) {
+			const artifact = join(base, name);
+			rmSync(artifact, { force: true });
+			execFileSync("tar", ["-czf", artifact, "-P", member], { cwd, stdio: "pipe" });
+			const staging = makeStagingRoot(base, `extract-${name}`);
+			const result = await extractArtifact(entryWith({ kind: "tar_topdir" }), artifact, staging, "1.0");
+			expect(result.kind, name).toBe("error");
+			if (result.kind === "error") expect(result.reason, name).toContain("unsafe archive member");
+			removeStagingRoot(staging);
+		}
+		rmSync(sources, { recursive: true, force: true });
+	});
 });

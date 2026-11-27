@@ -157,6 +157,22 @@ describe("deploy profile validation", () => {
 				]),
 		).toThrow(/root-absolute/);
 	});
+
+	it("bounds delete_matching to /usr/share/", () => {
+		expect(
+			() =>
+				new ComponentCatalog([
+					{
+						...baseEntry,
+						name: "bad-delete",
+						deploy_profile: {
+							in_tree: [],
+							system: [{ kind: "delete_matching", dir: "/usr/lib", patterns: ["*.so*"] }],
+						},
+					},
+				]),
+		).toThrow(/bounded to \/usr\/share\//);
+	});
 });
 
 describe("catalog load", () => {

@@ -194,6 +194,27 @@ describe("binary install pipeline", () => {
 		expect(outcome.text).toContain("integrity mismatch");
 	});
 
+	it("reuses a complete artifact on retry instead of re-downloading", async () => {
+		const first = await repoFetchBinary(
+			{ source_type: "binary", component: COMPONENT, ref: "1.0.0" },
+			paths,
+			catalog,
+		);
+		expect(first.kind).toBe("ok");
+		expect(first.details.reused).toBe(false);
+
+		const second = await repoFetchBinary(
+			{ source_type: "binary", component: COMPONENT, ref: "1.0.0" },
+			paths,
+			catalog,
+		);
+		expect(second.kind).toBe("ok");
+		expect(second.details.reused).toBe(true);
+		expect(second.text).toContain("reused existing fetch");
+		// The retry reports the same artifact facts as the first fetch.
+		expect(second.details.sha256).toBe(first.details.sha256);
+	});
+
 	it("rolls back the CONTENT to the previous generation when the health check fails", async () => {
 		await repoFetchBinary({ source_type: "binary", component: COMPONENT }, paths, catalog);
 		await atomicDeployBinary(
@@ -323,5 +344,39 @@ describe("permission gate", () => {
 			stubContext({ hasUI: false, confirmed: false }),
 		);
 		expect(result).toBeUndefined();
+	});
+
+	it("blocks destructive operations outright, even with confirmation", async () => {
+		const fire = stubExtension();
+		const destructive: Record<string, unknown>[] = [
+			{ component: "go", verify_cmd: "rm -rf /" },
+			{ component: "go", verify_cmd: "rm -rf /opt" },
+			{ component: "go", verify_cmd: "rm -rf /etc" },
+			{ component: "go", verify_cmd: "rm -rf /usr" },
+			{ component: "go", verify_cmd: "rm -rf / usr" },
+			{ component: "go", verify_cmd: "rm -fr /usr && true" },
+			{ command: "dd if=/dev/zero of=/dev/sda" },
+			{ content: "mkfs.ext4 /dev/sda1" },
+			{ command: ":(){ :|:& };:" },
+		];
+		for (const input of destructive) {
+			const result = await fire({ toolName: "atomic_deploy", input }, stubContext({ hasUI: true, confirmed: true }));
+			expect(result?.block, JSON.stringify(input)).toBe(true);
+			expect(result?.reason).toContain("destructive");
+		}
+	});
+
+	it("does not flag ordinary tool arguments as destructive", async () => {
+		const fire = stubExtension();
+		const ordinary: Record<string, unknown>[] = [
+			{ source_type: "binary", component: "go" },
+			{ component: "go", verify_cmd: "bin/go version" },
+			{ component: "go", verify_cmd: "rm -f /opt/go/bin/stale-file" },
+			{ content: "fix the build script to echo ok" },
+		];
+		for (const input of ordinary) {
+			const result = await fire({ toolName: "repo_fetch", input }, stubContext({ hasUI: false, confirmed: true }));
+			expect(result, JSON.stringify(input)).toBeUndefined();
+		}
 	});
 });
