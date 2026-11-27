@@ -319,14 +319,23 @@ describe("permission gate", () => {
 		expect(HIGH_RISK_TOOLS.has("install_audit")).toBe(false);
 	});
 
-	it("blocks a high-risk call when there is no UI to confirm with", async () => {
+	it("allows a high-risk call without a UI: the headless run is the run-level authorization", async () => {
 		const fire = stubExtension();
 		const result = await fire(
 			{ toolName: "atomic_deploy", input: { component: COMPONENT } },
 			stubContext({ hasUI: false, confirmed: true }),
 		);
+		expect(result).toBeUndefined();
+	});
+
+	it("blocks a destructive operation even in a headless run", async () => {
+		const fire = stubExtension();
+		const result = await fire(
+			{ toolName: "atomic_deploy", input: { component: "go", verify_cmd: "rm -rf /opt" } },
+			stubContext({ hasUI: false, confirmed: true }),
+		);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain("confirmation");
+		expect(result?.reason).toContain("destructive");
 	});
 
 	it("blocks a high-risk call the user declined", async () => {

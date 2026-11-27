@@ -8,8 +8,7 @@
  * `MainOptions.extensionFactories` is filled in.
  *
  * Before pi starts, the managed llama-server runtime is brought up (HLD §4.3) and the agent
- * dir's models.json is pointed at it, so no environment setup is needed. Own flags:
- *   --yes      pre-authorize high-risk tools for this run (headless -p has no confirm UI)
+ * dir's models.json is pointed at it, so no environment setup is needed. Own flag:
  *   --no-llm   do not manage llama-server; use the agent dir's models.json as-is
  */
 
@@ -20,22 +19,17 @@ import { ensureLlm, seedModelsJson } from "./llm.ts";
 const extensionFactories: InlineExtension[] = [{ name: "kan-agent", factory: kanAgentExtension, builtin: true }];
 
 /** Flags kan-agent handles itself; stripped so pi's parser never sees them. */
-function takeOwnFlags(argv: string[]): { args: string[]; assumeYes: boolean; noLlm: boolean } {
+function takeOwnFlags(argv: string[]): { args: string[]; noLlm: boolean } {
 	const args: string[] = [];
-	let assumeYes = false;
 	let noLlm = false;
 	for (const arg of argv) {
-		if (arg === "--yes") {
-			assumeYes = true;
-			continue;
-		}
 		if (arg === "--no-llm") {
 			noLlm = true;
 			continue;
 		}
 		args.push(arg);
 	}
-	return { args, assumeYes, noLlm };
+	return { args, noLlm };
 }
 
 /** Help and listing runs must not load a multi-gigabyte model. */
@@ -44,13 +38,7 @@ function wantsModel(args: string[]): boolean {
 	return !args.some((a) => quiet.has(a));
 }
 
-const { args, assumeYes, noLlm } = takeOwnFlags(process.argv.slice(2));
-
-// Run-level pre-authorization for high-risk tools in headless runs: the permission gate reads it.
-// Interactive runs still confirm in the dialog either way.
-if (assumeYes) {
-	process.env.KAN_AGENT_ASSUME_YES = "1";
-}
+const { args, noLlm } = takeOwnFlags(process.argv.slice(2));
 
 if (!noLlm && process.env.KAN_AGENT_NO_AUTO_LLM !== "1" && wantsModel(args)) {
 	const agentDir = getAgentDir();

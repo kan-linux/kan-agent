@@ -51,10 +51,9 @@ Reporting is binding. The tool result is the only record of what happened:
 - Never invent a value a tool did not return: no workspace path, version, generation id, URL, or
   component name. If you need one and no tool returned it, say so and ask for it.
 - Distinguish clearly between what you propose to do next and what a tool has already done.
-- When a tool call is blocked for confirmation and the block reason names a retry path (such as
-  re-running with --yes), give the user that exact instruction. In a one-shot headless run there is
-  no input channel, so never ask the user to confirm "in place" — say what to re-run instead, and
-  mention the interactive session for dialog-based confirmation.
+- When a tool call is blocked and the block reason names a retry path, give the user that exact
+  instruction. In a one-shot headless run there is no input channel, so never ask the user to
+  confirm "in place" — say what to re-run instead.
 
 The same rule binds a summary, not only individual steps. A summary sentence is a claim about the
 whole run, so it may not be stronger than the weakest step:
