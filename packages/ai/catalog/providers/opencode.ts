@@ -23,10 +23,7 @@ const LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
 	"opencode:deepseek-v4-flash",
 	"opencode:deepseek-v4.1-flash",
 	"opencode:deepseek-v4-pro",
-	"opencode:kimi-k2.5",
-	"opencode:kimi-k2.6",
 	"opencode:minimax-m2.7",
-	"opencode-go:kimi-k2.6",
 ]);
 
 // OpenCode serves each model on one protocol-specific endpoint. Native protocols
@@ -92,9 +89,10 @@ export function opencodeModels(ctx: ProviderContext): ChatModel[] {
 			if (provider === "opencode" && model.id === "grok-build-0.1") {
 				compat = { ...compat, supportsReasoningEffort: false };
 			}
-			if (model.id === "kimi-k2.6") {
-				// OpenCode Kimi K2.6 accepts Anthropic-style thinking objects
-				// and rejects string thinking values or combined reasoning_effort.
+			if (model.id.startsWith("kimi-")) {
+				// OpenCode Kimi models accept Anthropic-style thinking objects
+				// and reject string thinking values or combined reasoning_effort
+				// (the KIMI_OPENAI_COMPAT family format in families/kimi.ts).
 				compat = { ...compat, thinkingFormat: "deepseek", supportsReasoningEffort: false };
 			}
 			// models.dev reports these as @ai-sdk/anthropic, but OpenCode Go serves

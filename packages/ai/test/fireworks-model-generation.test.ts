@@ -50,7 +50,15 @@ function generateFireworksModels(
 	});
 	const result = spawnSync(
 		process.execPath,
-		["--import", pathToFileURL(preloadPath).href, "catalog/generate.ts", "--json-only", "--json-output", outputPath],
+		[
+			"--import",
+			pathToFileURL(preloadPath).href,
+			"catalog/generate.ts",
+			"--fetch-sources",
+			"--json-only",
+			"--json-output",
+			outputPath,
+		],
 		{ cwd: packageRoot, encoding: "utf8", timeout: 10_000 },
 	);
 	expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);

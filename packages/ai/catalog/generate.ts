@@ -46,6 +46,7 @@ interface GeneratorOptions {
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
 	pretty: boolean;
+	sources: "snapshot" | "pin" | "fetch";
 }
 
 function readGeneratorOptions(args: string[]): GeneratorOptions {
@@ -54,6 +55,7 @@ function readGeneratorOptions(args: string[]): GeneratorOptions {
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
 	let pretty = false;
+	let sources: "snapshot" | "pin" | "fetch" = "snapshot";
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -73,6 +75,14 @@ function readGeneratorOptions(args: string[]): GeneratorOptions {
 			pretty = true;
 			continue;
 		}
+		if (arg === "--update-snapshots") {
+			sources = "pin";
+			continue;
+		}
+		if (arg === "--fetch-sources") {
+			sources = "fetch";
+			continue;
+		}
 		if (arg === "--json-output") {
 			const value = args[++index];
 			if (!value) throw new Error("--json-output requires a directory");
@@ -85,7 +95,7 @@ function readGeneratorOptions(args: string[]): GeneratorOptions {
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
 	if (dataOnly && (jsonOnly || jsonOutputDir))
 		throw new Error("--data-only cannot be combined with JSON catalog output");
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
+	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, sources };
 }
 
 /** Key models by id, keeping the first entry per id, sorted by id. */
@@ -96,7 +106,7 @@ function sortedById<T extends { id: string }>(models: readonly T[]): [string, T]
 }
 
 async function generateModels(generatorOptions: GeneratorOptions): Promise<void> {
-	const sources = await loadCatalogSources(generatorOptions.strict);
+	const sources = await loadCatalogSources(generatorOptions.strict, { mode: generatorOptions.sources });
 	const catalogs = buildCatalog(PROVIDERS, sources, generatorOptions.strict);
 	// Providers without any models are left out, as if they did not exist.
 	const providers: Record<string, ProviderCatalog> = Object.fromEntries(

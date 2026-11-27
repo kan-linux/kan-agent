@@ -19,8 +19,10 @@ const TOGGLE_REASONING_EFFORT_COMPAT: OpenAICompletionsCompat = {
 	supportsReasoningEffort: true,
 };
 
+// gpt-oss is effort-style on Together but models.dev currently marks it deprecated, so it does not
+// reach the generated catalog; the mapping stays for when it returns.
 const REASONING_EFFORT_MODELS = new Set(["openai/gpt-oss-20b", "openai/gpt-oss-120b"]);
-const TOGGLE_REASONING_EFFORT_MODELS = new Set(["deepseek-ai/DeepSeek-V4-Pro-0813"]);
+const TOGGLE_REASONING_EFFORT_MODELS = new Set(["deepseek-ai/DeepSeek-V4.1-Flash-1017"]);
 
 const REASONING_EFFORT_LEVELS: ThinkingLevelMap = { off: null, minimal: null };
 const DEEPSEEK_V4_LEVELS: ThinkingLevelMap = { minimal: null, low: null, medium: null, high: "high", xhigh: null };

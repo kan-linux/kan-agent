@@ -1413,8 +1413,8 @@ describe("openai-completions tool_choice", () => {
 		expect(messages[0]).not.toHaveProperty("reasoning");
 	});
 
-	it("sends thinking disabled for OpenCode Kimi K2.6 when thinking is off", async () => {
-		const model = getModel("opencode", "kimi-k2.6")!;
+	it("sends thinking disabled for OpenCode Kimi K3 when thinking is off", async () => {
+		const model = getModel("opencode", "kimi-k3")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1435,8 +1435,8 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
-	it("sends thinking enabled for OpenCode Kimi K2.6 when thinking is enabled", async () => {
-		const model = getModel("opencode", "kimi-k2.6")!;
+	it("sends thinking enabled for OpenCode Kimi K3 when thinking is enabled", async () => {
+		const model = getModel("opencode", "kimi-k3")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1507,7 +1507,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for OpenCode completions models", async () => {
-		const cases = [getModel("opencode-go", "kimi-k3")!, getModel("opencode", "kimi-k2.6")!] as const;
+		const cases = [getModel("opencode-go", "kimi-k3")!, getModel("opencode", "kimi-k3")!] as const;
 
 		for (const model of cases) {
 			let payload: unknown;

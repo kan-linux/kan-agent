@@ -41,6 +41,7 @@ function generateOpencodeModels(models: ModelsDevV2Model[], strict = false) {
 			pathToFileURL(preloadPath).href,
 			"catalog/generate.ts",
 			...(strict ? ["--strict"] : []),
+			"--fetch-sources",
 			"--json-only",
 			"--json-output",
 			outputPath,
