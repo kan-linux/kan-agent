@@ -48,6 +48,23 @@ sudo /opt/kan-agent/kan-agent "帮我安装go"
 at an engine checkout in any other location.
 
 
+## Contributing
+
+- Contributors can open PRs
+- Collaborators will be invited based on contributions
+- Maintainers can push to branches in the `kan-agent` repo and merge PRs into the `master` branch
+- Any help with managing issues, PRs and projects is very appreciated!
+- Read the [CONTRIBUTING.md](https://github.com/kan-linux/kan/blob/master/CONTRIBUTING.md) for more information
+  
+## Language Policy and AI Policy
+
+- To facilitate clear and effective communication, all discussions, comments, documentation, and PRs in this project **should be** conducted in English, this ensures that all contributors can participate and collaborate effectively.
+- English and Chinese are **both fine** for issues and discussions.
+- Discussions, issues and PRs should include **human-written content**. **AI-assisted polish is accepted and welcomed**(many of us are non-native English speakers). What matters is not who typed the content but whether a human understands it.
+- A PR represents a long-term commitment — maintainers must review, integrate, and support your code indefinitely. What matters is not who wrote the code but whether a human understands it: **either fully, or at the 60–90% level, and is able to explain major change to reviewers, even with AI assistance**(many of us are not AI experts).
+- Fully automated AI-generated content and fully automated PRs are not permitted. We value human connection and communication over fully AI-driven interaction, in other words: Human-in-the-Loop.
+
+
 ## Acknowledgements
 - Thanks to [llama.cpp](https://github.com/ggml-org/llama.cpp)
 - Thanks to [Pi](https://github.com/earendil-works/pi)
