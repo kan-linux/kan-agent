@@ -1,6 +1,6 @@
 {
 	"name": "@kan-linux/kan-agent",
-	"version": "0.0.3",
+	"version": "0.0.4",
 	"private": true,
 	"description": "Kan-Agent: customized Pi tool layer, permission layer, and llama-server binding",
 	"type": "module",
