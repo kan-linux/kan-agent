@@ -55,7 +55,6 @@ at an engine checkout in any other location.
 - Special thanks to the AI assistant for extensive technical discussions, architectural advice, and writing assistance throughout the development of Kan-Agent
 
 
-
 ## Branches
 
 - master
