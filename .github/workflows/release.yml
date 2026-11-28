@@ -49,11 +49,12 @@ jobs:
           persist-credentials: false
 
       # Releases are cut from the default branch only: a tag on a feature branch
-      # must not produce a published package.
+      # must not produce a published package. HEAD is the checked-out ref (the
+      # tag being released), which is what must be contained in the default branch.
       - name: Check the tag is on the default branch
         run: |
           set -euo pipefail
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" "origin/${{ github.event.repository.default_branch }}"; then
+          if ! git merge-base --is-ancestor HEAD "origin/${{ github.event.repository.default_branch }}"; then
             echo "::error::${RELEASE_TAG} points at a commit that is not on ${{ github.event.repository.default_branch }}. Only tags on ${{ github.event.repository.default_branch }} are released."
             exit 1
           fi
@@ -96,6 +97,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # build:binary does not build every workspace the CLI depends on
+      # (pi-codemode, pi-mcp); the root build produces those dists.
       - name: Build workspace packages
         run: npm run build
 
@@ -108,9 +111,9 @@ jobs:
             exit 1
           fi
 
-      # check + tests + release tree + tarball + selftest (the local release command).
+      # Only package here: the check/test gates run locally before the tag is cut.
       - name: Build and package
-        run: ./build.sh ci
+        run: ./build.sh build
 
       - name: Stage release assets
         run: |
