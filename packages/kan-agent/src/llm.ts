@@ -56,8 +56,11 @@ function serverArgs(model: string, port: number): string[] {
 		"99",
 		"-t",
 		"6",
+		// 16k, not the model's full 128k: pi's request clamp reserves a fixed 4096-token
+		// margin, so an 8k window left the answer sharing less than 4k with the thinking —
+		// by the summary turn the budget collapsed and the reply was cut mid-sentence.
 		"--ctx-size",
-		"8192",
+		"16384",
 		"--ubatch-size",
 		"64",
 		"--poll",
@@ -240,29 +243,46 @@ function vulkanLibDir(): string | undefined {
 	return existsSync(join(dir, "libvulkan.so.1")) ? dir : undefined;
 }
 
+/** The llama-server provider's models.json shape (pi reads `<agentDir>/models.json`). */
+interface ModelsFile {
+	providers: Record<
+		string,
+		{ baseUrl?: string; models?: Array<{ id: string; contextWindow?: number; maxTokens?: number }> }
+	>;
+}
+
 /**
  * Point the agent dir's models.json at the managed endpoint (pi resolves its provider list from
  * `<agentDir>/models.json`). A missing file is seeded from the shipped template; a file with our
- * llama-server provider has its baseUrl refreshed; any other config is left untouched.
+ * llama-server provider gets its baseUrl refreshed and our shipped model's capability fields
+ * (contextWindow/maxTokens) synced from the template — a stale seeded copy would silently starve
+ * the request budget. Any other config is left untouched.
  * Returns the path pi will read.
  */
 export function seedModelsJson(baseUrl: string, agentDir: string): string {
 	const modelsPath = join(agentDir, "models.json");
+	const template = JSON.parse(readModelsTemplate()) as ModelsFile;
 	if (existsSync(modelsPath)) {
-		const config = JSON.parse(readFileSync(modelsPath, "utf8")) as {
-			providers?: Record<string, { baseUrl?: string }>;
-		};
+		const config = JSON.parse(readFileSync(modelsPath, "utf8")) as ModelsFile;
 		const provider = config.providers?.["llama-server"];
 		if (!provider) return modelsPath;
+		let changed = false;
 		if (provider.baseUrl !== baseUrl) {
 			provider.baseUrl = baseUrl;
-			writeFileSync(modelsPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+			changed = true;
 		}
+		const shipped = new Map((template.providers["llama-server"]?.models ?? []).map((m) => [m.id, m]));
+		provider.models = (provider.models ?? []).map((model) => {
+			const want = shipped.get(model.id);
+			if (!want || (model.contextWindow === want.contextWindow && model.maxTokens === want.maxTokens)) return model;
+			changed = true;
+			return { ...model, contextWindow: want.contextWindow, maxTokens: want.maxTokens };
+		});
+		if (changed) writeFileSync(modelsPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 		return modelsPath;
 	}
 
-	const template = readModelsTemplate();
-	const config = JSON.parse(template) as { providers: Record<string, { baseUrl?: string }> };
+	const config = template;
 	config.providers["llama-server"].baseUrl = baseUrl;
 	mkdirSync(agentDir, { recursive: true });
 	writeFileSync(modelsPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");

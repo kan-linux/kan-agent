@@ -10,7 +10,7 @@
 				{
 					"id": "gemma4-e4b",
 					"name": "Gemma4-e4b Q4_0 (local llama-server)",
-					"contextWindow": 8192,
+					"contextWindow": 16384,
 					"maxTokens": 4096
 				}
 			]
