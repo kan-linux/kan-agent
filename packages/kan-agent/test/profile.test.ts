@@ -5,7 +5,16 @@
  * /etc/ld.so.conf.d, /usr/local/bin and /usr/share writes of install-prebuilts.sh revertible.
  */
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readFileSync,
+	readlinkSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type CatalogEntry, ComponentCatalog } from "../src/catalog.ts";
@@ -324,8 +333,12 @@ describe("vendor-nested install root (chrome layout)", () => {
 				"opt/google/chrome/google-chrome": "#!/bin/sh\nexec chrome\n",
 				"opt/google/chrome/product_logo_256.png": "png",
 				"usr/share/applications/google-chrome.desktop": "[Desktop Entry]\nIcon=google-chrome\n",
+				"usr/share/man/man1/google-chrome-stable.1.gz": "man",
 			},
-			symlinks: { "usr/bin/google-chrome-stable": "/opt/google/chrome/google-chrome" },
+			symlinks: {
+				"usr/bin/google-chrome-stable": "/opt/google/chrome/google-chrome",
+				"usr/share/man/man1/google-chrome.1.gz": "google-chrome-stable.1.gz",
+			},
 			executables: ["opt/google/chrome/chrome"],
 		});
 	}
@@ -393,5 +406,30 @@ describe("vendor-nested install root (chrome layout)", () => {
 		const rolled = await systemRollback({ component: "chrome", generation: "1" }, paths, catalog);
 		expect(rolled.kind).toBe("ok");
 		expect(readlinkSync(paths.installRoot("/opt/google/chrome"))).toContain("store/chrome/1.0.1");
+	});
+
+	it("keeps relative payload symlinks verbatim across a same-version redeploy", async () => {
+		const catalog = catalogWith(chromeEntry());
+		const artifact = stageChromeDeb("1.0.1", "report-1.0.1");
+		const manLink = join(root, "/usr/share/man/man1/google-chrome.1.gz");
+		// A file this payload does not own: the placement must leave it alone.
+		mkdirSync(join(root, "/usr/share/unrelated"), { recursive: true });
+		writeFileSync(join(root, "/usr/share/unrelated/keep.txt"), "mine\n", "utf8");
+		chmodSync(join(root, "/usr/share/unrelated/keep.txt"), 0o444);
+
+		// The second deploy replaces the same store entry and meets the first deploy's
+		// placements as stale entries — including a relative link that must not have been
+		// rewritten into a link at the (gone) staging tree.
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const outcome = await atomicDeployBinary(
+				{ component: "chrome", version: "current", artifact },
+				paths,
+				catalog,
+				{ vm: false },
+			);
+			expect(outcome.kind).toBe("ok");
+		}
+		expect(readlinkSync(manLink)).toBe("google-chrome-stable.1.gz");
+		expect(statSync(join(root, "/usr/share/unrelated/keep.txt")).mode & 0o777).toBe(0o444);
 	});
 });

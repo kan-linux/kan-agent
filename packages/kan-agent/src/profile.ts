@@ -13,7 +13,6 @@ import { execFile, execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	copyFileSync,
-	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -179,12 +178,7 @@ export function writeSystemConfig(entry: CatalogEntry, paths: KanPaths, installR
 					break;
 				}
 				const destDir = rootPath(paths, step.to);
-				mkdirSync(destDir, { recursive: true });
-				cpSync(sourceDir, destDir, { recursive: true, force: true });
-				// The store is read-only by construction and cpSync carries those modes into
-				// the placement; a live-system copy is owner-writable again, or the next step
-				// (or the next deploy, or a rollback) cannot write inside what this placed.
-				makePlacedWritable(destDir);
+				copyPlacedTree(sourceDir, destDir);
 				notes.push(`system copy_tree: ${step.from} -> ${step.to}`);
 				break;
 			}
@@ -310,20 +304,30 @@ function rootPath(paths: KanPaths, path: string): string {
 }
 
 /**
- * Give a placed tree its owner-write bit back (nothing else: execute and setuid bits survive).
- * The inverse of the store's read-only pass, for live-system copies. Symlinks are skipped:
- * chmod follows them and would flip the mode of whatever they point at.
+ * Place a store tree into the live system the way a package install does: directories merge into
+ * their destination (it may hold entries this payload does not own), files and links replace any
+ * stale entry an earlier deploy left there, and symlinks are copied verbatim — a relative link
+ * must stay relative or it points into the throw-away staging tree and dangles the moment that
+ * tree goes away. Every placed file is owner-writable again: the store is read-only by
+ * construction and those modes must not leak into a live copy (read, execute and setuid bits
+ * survive).
  */
-function makePlacedWritable(dir: string): void {
-	chmodSync(dir, statSync(dir).mode | 0o200);
-	for (const item of readdirSync(dir, { withFileTypes: true })) {
-		const path = join(dir, item.name);
-		if (item.isSymbolicLink()) continue;
+function copyPlacedTree(sourceDir: string, destDir: string): void {
+	mkdirSync(destDir, { recursive: true });
+	for (const item of readdirSync(sourceDir, { withFileTypes: true })) {
+		const source = join(sourceDir, item.name);
+		const dest = join(destDir, item.name);
 		if (item.isDirectory()) {
-			makePlacedWritable(path);
-		} else {
-			chmodSync(path, statSync(path).mode | 0o200);
+			copyPlacedTree(source, dest);
+			continue;
 		}
+		rmSync(dest, { force: true });
+		if (item.isSymbolicLink()) {
+			symlinkSync(readlinkSync(source), dest);
+			continue;
+		}
+		copyFileSync(source, dest);
+		chmodSync(dest, statSync(source).mode | 0o200);
 	}
 }
 

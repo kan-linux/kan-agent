@@ -87,7 +87,7 @@ async function extractByKind(
 				throw new Error(`${basename(artifact)}: layout unexpected, no ${spec.subdir} under the extracted tree`);
 			}
 			const contentDir = join(staging, "content");
-			cpSync(subdir, contentDir, { recursive: true });
+			cpSync(subdir, contentDir, { recursive: true, verbatimSymlinks: true });
 			return { contentDir };
 		}
 		case "tar_single_file": {
@@ -129,12 +129,12 @@ async function extractByKind(
 			const tree = matchGlobDirs(squashfs, spec.tree_glob);
 			if (!tree) throw new Error(`${basename(artifact)}: no ${spec.tree_glob} under squashfs-root`);
 			const contentDir = join(staging, "content");
-			cpSync(tree, contentDir, { recursive: true });
+			cpSync(tree, contentDir, { recursive: true, verbatimSymlinks: true });
 			const usr = join(squashfs, spec.usr_dir);
 			if (existsSync(usr)) {
 				// Keep the AppImage's /usr payload inside the tree so the deploy profile can place
 				// it (desktop entries, icons, mime data) without re-reading the artifact.
-				cpSync(usr, join(contentDir, spec.usr_dir), { recursive: true });
+				cpSync(usr, join(contentDir, spec.usr_dir), { recursive: true, verbatimSymlinks: true });
 				notes.push(`${spec.usr_dir}/ payload kept in the tree for deploy-profile placement`);
 			}
 			return { contentDir };
@@ -156,12 +156,12 @@ async function extractByKind(
 			const tree = matchGlobDirs(work, spec.tree_glob);
 			if (!tree) throw new Error(`${basename(artifact)}: no ${spec.tree_glob} under the extracted tree`);
 			const contentDir = join(staging, "content");
-			cpSync(tree, contentDir, { recursive: true });
+			cpSync(tree, contentDir, { recursive: true, verbatimSymlinks: true });
 			const usr = join(work, spec.usr_dir);
 			if (existsSync(usr)) {
 				// Keep the .deb's /usr payload inside the tree so the deploy profile can place
 				// it (launcher symlink, desktop entries) without re-reading the artifact.
-				cpSync(usr, join(contentDir, spec.usr_dir), { recursive: true });
+				cpSync(usr, join(contentDir, spec.usr_dir), { recursive: true, verbatimSymlinks: true });
 				notes.push(`${spec.usr_dir}/ payload kept in the tree for deploy-profile placement`);
 			}
 			// The control metadata declares the real package version; it keys the store entry so
@@ -314,7 +314,7 @@ function rustStdMerge(contentDir: string, notes: string[]): void {
 			const sysroot = join(contentDir, "rustc", "lib", "rustlib", triple.name, "lib");
 			if (existsSync(sysroot)) continue;
 			mkdirSync(dirname(sysroot), { recursive: true });
-			cpSync(stdLib, sysroot, { recursive: true });
+			cpSync(stdLib, sysroot, { recursive: true, verbatimSymlinks: true });
 			notes.push(`rust_std_merge: ${entry.name}/lib/rustlib/${triple.name}/lib -> rustc sysroot`);
 		}
 	}

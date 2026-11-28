@@ -176,8 +176,12 @@ describe("extractArtifact", () => {
 				"opt/google/chrome/chrome-sandbox": "sandbox",
 				"opt/google/chrome/product_logo_256.png": "png",
 				"usr/share/applications/google-chrome.desktop": "[Desktop Entry]\n",
+				"usr/share/man/man1/google-chrome-stable.1.gz": "man",
 			},
-			symlinks: { "usr/bin/google-chrome-stable": "/opt/google/chrome/google-chrome" },
+			symlinks: {
+				"usr/bin/google-chrome-stable": "/opt/google/chrome/google-chrome",
+				"usr/share/man/man1/google-chrome.1.gz": "google-chrome-stable.1.gz",
+			},
 		});
 		const staging = makeStagingRoot(base, "extract-deb");
 		const result = await extractArtifact(
@@ -195,6 +199,11 @@ describe("extractArtifact", () => {
 		// The launcher symlink is the deb's own absolute link and must survive as a symlink.
 		expect(readlinkSync(join(result.contentDir, "usr", "bin", "google-chrome-stable"))).toBe(
 			"/opt/google/chrome/google-chrome",
+		);
+		// A relative payload link must stay relative: an absolutized one would point into the
+		// throw-away staging tree and dangle after extraction.
+		expect(readlinkSync(join(result.contentDir, "usr", "share", "man", "man1", "google-chrome.1.gz"))).toBe(
+			"google-chrome-stable.1.gz",
 		);
 		removeStagingRoot(staging);
 	});
