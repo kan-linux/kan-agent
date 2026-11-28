@@ -14,10 +14,12 @@ import { spawn } from "node:child_process";
 import {
 	closeSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
 	readFileSync,
+	readlinkSync,
 	statSync,
 	writeFileSync,
 } from "node:fs";
@@ -123,6 +125,19 @@ export function findModel(execDir = dirname(process.execPath)): string {
 		.filter((name) => name.endsWith(".gguf"))
 		.sort()
 		.map((name) => join(dir, name));
+	const unusable = models.filter((path) => !isFile(path));
+	if (unusable.length > 0) {
+		const why = unusable.map((path) => {
+			if (lstatSync(path).isSymbolicLink()) {
+				const target = readlinkSync(path);
+				return existsSync(path)
+					? `${path} is a symlink to ${target}, which is not a regular file`
+					: `${path} is a symlink to ${target}, which does not exist`;
+			}
+			return `${path} is not a regular file`;
+		});
+		throw new Error(`${why.join("\n")}\n${MODEL_ADVICE}`);
+	}
 	if (models.length === 0) {
 		throw new Error(`${dir} holds no .gguf model; place exactly one there\n${MODEL_ADVICE}`);
 	}
@@ -137,7 +152,7 @@ export function findModel(execDir = dirname(process.execPath)): string {
 /** What to do when the model dir cannot serve a request: what to get and where. */
 const MODEL_ADVICE = [
 	"  current base model: Gemma4-e4b Q4_0 (we will provide our fine-tuned model in the future)",
-	"  download: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/blob/main/gemma-4-E4B-it-Q4_0.gguf",
+	"  download: https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf/blob/main/gemma-4-E4B_q4_0-it.gguf",
 ].join("\n");
 
 function isFile(path: string): boolean {
@@ -208,10 +223,16 @@ export async function ensureLlm(options?: { baseUrl?: string; logPath?: string }
 	process.once("SIGTERM", stop);
 
 	const baseUrl = `http://127.0.0.1:${port}`;
+	const logHint = options?.logPath ? `; see ${options.logPath}` : "";
 	const deadline = Date.now() + HEALTH_TIMEOUT_MS;
 	while (Date.now() < deadline) {
+		// A signal-killed server leaves exitCode null (signalCode carries the verdict); without
+		// this check a crash would spin out the full timeout and report a bogus "not healthy".
+		if (child.signalCode !== null) {
+			throw new Error(`llama-server was killed by ${child.signalCode} before becoming healthy${logHint}`);
+		}
 		if (child.exitCode !== null) {
-			throw new Error(`llama-server exited with code ${child.exitCode} before becoming healthy`);
+			throw new Error(`llama-server exited with code ${child.exitCode} before becoming healthy${logHint}`);
 		}
 		if (await isHealthy(baseUrl)) {
 			return { baseUrl: `${baseUrl}/v1`, modelPath: model, serverPath, pid: child.pid, stop };
@@ -219,7 +240,7 @@ export async function ensureLlm(options?: { baseUrl?: string; logPath?: string }
 		await sleep(500);
 	}
 	stop();
-	throw new Error(`llama-server did not become healthy within ${HEALTH_TIMEOUT_MS / 1000}s at ${baseUrl}`);
+	throw new Error(`llama-server did not become healthy within ${HEALTH_TIMEOUT_MS / 1000}s at ${baseUrl}${logHint}`);
 }
 
 /** Whether a llama-server answers /health on `origin`. */

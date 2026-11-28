@@ -4,10 +4,10 @@
  * — never a silent borrow from another tree.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findLlamaServer, findModel } from "../src/llm.ts";
+import { ensureLlm, findLlamaServer, findModel } from "../src/llm.ts";
 import { makeStagingRoot, removeStagingRoot } from "./fixture.ts";
 
 const base = join(import.meta.dirname, ".tmp");
@@ -51,6 +51,48 @@ describe("findModel", () => {
 		const execDir = tree("llm-tree");
 		mkdirSync(join(execDir, "llm"), { recursive: true });
 		expect(() => findModel(execDir)).toThrow(/holds no \.gguf model/);
+	});
+
+	it("returns the symlink path when its target is a regular file", () => {
+		const dir = tree("llm-symlink");
+		const target = join(dir, "models");
+		mkdirSync(target, { recursive: true });
+		process.env.KAN_AGENT_LLM_DIR = target;
+		writeFileSync(join(dir, "real.gguf"), "x");
+		symlinkSync(join(dir, "real.gguf"), join(target, "model.gguf"));
+		expect(findModel()).toBe(join(target, "model.gguf"));
+	});
+
+	it("rejects a dangling .gguf symlink and names its target", () => {
+		const dir = tree("llm-dangling");
+		const target = join(dir, "models");
+		mkdirSync(target, { recursive: true });
+		process.env.KAN_AGENT_LLM_DIR = target;
+		symlinkSync(join(dir, "absent.gguf"), join(target, "model.gguf"));
+		expect(() => findModel()).toThrow(/model\.gguf is a symlink to .*absent\.gguf, which does not exist/);
+	});
+
+	it("rejects a dangling symlink even next to a usable model", () => {
+		const dir = tree("llm-mixed");
+		const target = join(dir, "models");
+		mkdirSync(target, { recursive: true });
+		process.env.KAN_AGENT_LLM_DIR = target;
+		writeFileSync(join(target, "good.gguf"), "x");
+		symlinkSync(join(dir, "absent.gguf"), join(target, "bad.gguf"));
+		expect(() => findModel()).toThrow(/bad\.gguf is a symlink to .*absent\.gguf, which does not exist/);
+	});
+});
+
+describe("ensureLlm", () => {
+	it("reports a signal-killed server instead of spinning to the health timeout", async () => {
+		const dir = tree("llm-signal");
+		const server = join(dir, "llama-server");
+		writeFileSync(server, "#!/bin/sh\nkill -s SEGV $$\n");
+		chmodSync(server, 0o755);
+		writeFileSync(join(dir, "model.gguf"), "x");
+		process.env.KAN_AGENT_LLAMA_SERVER = server;
+		process.env.KAN_AGENT_LLM_DIR = dir;
+		await expect(ensureLlm({ baseUrl: "http://127.0.0.1:59873/v1" })).rejects.toThrow(/killed by SIGSEGV/);
 	});
 });
 
