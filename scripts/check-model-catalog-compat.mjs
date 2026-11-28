@@ -33,6 +33,13 @@ import { compareModelCatalogPiVersions } from "./model-catalog-protocol.ts";
 
 const PI_AI_PACKAGE = "@earendil-works/pi-ai";
 
+/**
+ * Where the release tags live. A clone of pi's own repository carries them; a fork or mirror
+ * that tracks the source without the tags would otherwise fail the `git archive` below on every
+ * new upstream release.
+ */
+const PI_REPOSITORY = "https://github.com/earendil-works/pi.git";
+
 /** Read a release's built-in model data (`dist/providers/data`) as model lists by provider. */
 function readBuiltinModels(dataDir) {
 	const builtin = {};
@@ -71,6 +78,11 @@ function run(command, args, cwd) {
 	return result.stdout;
 }
 
+/** Whether `tag` names a commit in this clone. */
+function tagExists(cwd, tag) {
+	return spawnSync("git", ["rev-parse", "-q", "--verify", `refs/tags/${tag}`], { cwd, stdio: "ignore" }).status === 0;
+}
+
 function main() {
 	const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 	const { values } = parseArgs({ options: { catalog: { type: "string" } } });
@@ -90,7 +102,12 @@ function main() {
 		console.log(`Checking the model catalog against pi ${release}...`);
 		// The release's source code.
 		const archive = join(temporaryDir, "release.tar");
-		run("git", ["archive", "--prefix=release/", "--output", archive, `v${release}`], root);
+		const tag = `v${release}`;
+		if (!tagExists(root, tag)) {
+			console.log(`Release tag ${tag} is not in this clone; fetching it from ${PI_REPOSITORY}...`);
+			run("git", ["fetch", "--depth", "1", PI_REPOSITORY, `refs/tags/${tag}:refs/tags/${tag}`], root);
+		}
+		run("git", ["archive", "--prefix=release/", "--output", archive, tag], root);
 		run("tar", ["xf", archive, "-C", temporaryDir], root);
 
 		// The built-in models users have: the data shipped in the published package.

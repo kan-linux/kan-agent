@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { makeWritable } from "../src/store.ts";
 
@@ -82,4 +82,62 @@ export function makeFakeTarball(
 /** A fetched artifact at the path repo_fetch would have left it: <root>/workspace/<component>/... */
 export function fetchedArtifact(root: string, component: string, tarball: string): string {
 	return join(root, "var", "lib", "kan-agent", "workspace", component, tarball);
+}
+
+/**
+ * Build a synthetic .deb: an ar archive of debian-binary, control.tar.gz and data.tar.gz — the
+ * real member names, because the deb extract kind reads them. `files` are payload paths relative
+ * to the data root (e.g. "opt/google/chrome/chrome"), `symlinks` map link path -> link target,
+ * `executables` lists payload paths that need the execute bit.
+ */
+export function makeFakeDeb(
+	baseDir: string,
+	options: {
+		name: string;
+		version: string;
+		files: Record<string, string>;
+		symlinks?: Record<string, string>;
+		executables?: string[];
+	},
+): string {
+	const staging = join(baseDir, `${options.name}-deb-src`);
+	rmSync(staging, { recursive: true, force: true });
+	const dataDir = join(staging, "data");
+	const controlDir = join(staging, "control");
+	mkdirSync(dataDir, { recursive: true });
+	mkdirSync(controlDir, { recursive: true });
+
+	const tops = new Set<string>();
+	for (const [rel, content] of Object.entries(options.files)) {
+		tops.add(rel.split("/")[0]);
+		const path = join(dataDir, rel);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, content, "utf8");
+	}
+	for (const [rel, target] of Object.entries(options.symlinks ?? {})) {
+		tops.add(rel.split("/")[0]);
+		const path = join(dataDir, rel);
+		mkdirSync(dirname(path), { recursive: true });
+		symlinkSync(target, path);
+	}
+	for (const rel of options.executables ?? []) {
+		chmodSync(join(dataDir, rel), 0o755);
+	}
+	writeFileSync(
+		join(controlDir, "control"),
+		`Package: ${options.name}\nVersion: ${options.version}\nArchitecture: amd64\n`,
+		"utf8",
+	);
+
+	const deb = join(baseDir, `${options.name}.deb`);
+	rmSync(deb, { force: true });
+	execFileSync("tar", ["-czf", join(staging, "data.tar.gz"), "-C", dataDir, ...tops], { stdio: "pipe" });
+	execFileSync("tar", ["-czf", join(staging, "control.tar.gz"), "-C", controlDir, "control"], { stdio: "pipe" });
+	writeFileSync(join(staging, "debian-binary"), "2.0\n", "utf8");
+	execFileSync("ar", ["rcs", deb, "debian-binary", "control.tar.gz", "data.tar.gz"], {
+		cwd: staging,
+		stdio: "pipe",
+	});
+	rmSync(staging, { recursive: true, force: true });
+	return deb;
 }

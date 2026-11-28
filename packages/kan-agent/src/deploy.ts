@@ -128,13 +128,17 @@ export async function atomicDeployBinary(
 		return reject((e as Error).message);
 	}
 
-	const storePath = commitToStore(paths, args.component, version, extracted.contentDir);
+	// A rolling download link names no version in its artifact; the payload's own version keys
+	// the store entry, so successive deploys keep their own trees and a rollback reaches the
+	// tree its record names. Formats without a declared version keep the resolved one.
+	const deployedVersion = extracted.version ?? version;
+	const storePath = commitToStore(paths, args.component, deployedVersion, extracted.contentDir);
 	rmSync(staging, { recursive: true, force: true });
 	// commitToStore moved contentDir out; drop the now-empty staging shell.
 	assertSafeToRemove(paths, staging);
 	rmSync(staging, { recursive: true, force: true });
 
-	const installRoot = paths.installRoot(args.component);
+	const installRoot = paths.installRoot(entry.install_root);
 	const generations = new GenerationStore(paths);
 	const verifyCmd = args.verify_cmd ?? entry.verify_cmd;
 	const placement = captureSystemConfig(entry, paths, storePath);
@@ -145,7 +149,7 @@ export async function atomicDeployBinary(
 			args.component,
 			{
 				component: args.component,
-				version,
+				version: deployedVersion,
 				store_path: storePath,
 				install_root: installRoot,
 				config_placement: entry.config_placement,
@@ -195,7 +199,7 @@ export async function atomicDeployBinary(
 				"STATUS: FAILED",
 				"step: atomic_deploy",
 				`component: ${args.component}`,
-				`version: ${version}`,
+				`version: ${deployedVersion}`,
 				`store_path: ${storePath}`,
 				`verify_cmd: ${verifyCmd ?? "(verify_exists)"}`,
 				`verify_output: ${verify.output}`,
@@ -206,7 +210,7 @@ export async function atomicDeployBinary(
 				status: "failed",
 				reason: "verify_failed",
 				component: args.component,
-				version,
+				version: deployedVersion,
 				generation: record.generation,
 				verify_output: verify.output,
 				rolled_back_to: rolledBack ? parent : null,
@@ -220,7 +224,7 @@ export async function atomicDeployBinary(
 			"STATUS: OK",
 			"step: atomic_deploy",
 			`component: ${args.component}`,
-			`version: ${version}`,
+			`version: ${deployedVersion}`,
 			`generation: ${record.generation}`,
 			`store_path: ${storePath}`,
 			`install_root: ${installRoot} -> ${storePath}`,
@@ -235,7 +239,7 @@ export async function atomicDeployBinary(
 			status: "ok",
 			tool: "atomic_deploy",
 			component: args.component,
-			version,
+			version: deployedVersion,
 			generation: record.generation,
 			store_path: storePath,
 			install_root: installRoot,
@@ -398,7 +402,7 @@ function verifyExistsPassed(paths: string[], installRoot: string): boolean {
 function displaceLegacyInstallRoot(paths: KanPaths, installRoot: string): void {
 	if (!existsSync(installRoot) && !isSymlink(installRoot)) return;
 	if (isSymlink(installRoot)) return;
-	assertSafeToRemove(paths, installRoot);
+	assertSafeToRemove(paths, installRoot, installRoot);
 	makeWritable(installRoot);
 	rmSync(installRoot, { recursive: true, force: true });
 }

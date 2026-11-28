@@ -43,9 +43,13 @@ export class KanPaths {
 		this.generationsDir = join(this.stateDir, "/generations");
 	}
 
-	/** <root>/opt/<component> — where the deployed tool is reachable. */
-	installRoot(component: string): string {
-		return join(this.root, "/opt", component);
+	/**
+	 * The deployed tool's reachable path: the catalog's `install_root` below this root. The
+	 * catalog is the authority on placement — roots may nest one vendor level
+	 * (e.g. /opt/google/chrome), which is why this is not derived from the component name.
+	 */
+	installRoot(installRoot: string): string {
+		return join(this.root, installRoot);
 	}
 
 	/** <root>/var/lib/kan-agent/store/<component>/<version> */
@@ -72,10 +76,10 @@ export function resolveKanPaths(): KanPaths {
  * primitive). The script runs as root, so a buggy path must never take out the system.
  *
  * Refuses: empty paths, the root itself, system root dirs, trailing slashes (rm -rf "$dir/" with
- * dir="" expands to /), paths with "..", and anything outside the state dir or the per-tool /opt
- * roots. Only what is already on disk is deleted; a missing target is a quiet no-op.
+ * dir="" expands to /), paths with "..", and anything outside the state dir or the tool roots under
+ * /opt. Only what is already on disk is deleted; a missing target is a quiet no-op.
  */
-export function assertSafeToRemove(paths: KanPaths, target: string): void {
+export function assertSafeToRemove(paths: KanPaths, target: string, installRoot?: string): void {
 	if (!target) throw new UnsafePathError("safe_rm_rf: refusing empty path");
 	const normalized = resolve(target);
 	if (normalized === paths.root || normalized === "" || normalized === sep) {
@@ -115,10 +119,15 @@ export function assertSafeToRemove(paths: KanPaths, target: string): void {
 
 	const insideState = normalized === paths.stateDir || normalized.startsWith(`${paths.stateDir}${sep}`);
 	// Under /opt only a tool root itself may be removed (install-prebuilts.sh's per-tool
-	// allowlist), never an arbitrary depth and never /opt itself: /opt/<tool> is the unit the
-	// store replaces. With root on a live system this is the hard boundary for rm -rf.
-	const underOpt = dirname(normalized) === join(paths.root, "/opt");
-	if (!insideState && !underOpt) {
+	// allowlist), never an arbitrary depth and never /opt itself: the install root is the unit
+	// the store replaces. One-level /opt/<tool> is the common shape; a nested root (vendor
+	// layout like /opt/google/chrome) is removable only as the exact `installRoot` its catalog
+	// entry declares. With root on a live system this is the hard boundary for rm -rf.
+	const optBase = join(paths.root, "/opt");
+	const underOpt = dirname(normalized) === optBase;
+	const declaredRoot =
+		installRoot !== undefined && resolve(installRoot) === normalized && dirname(dirname(normalized)) === optBase;
+	if (!insideState && !underOpt && !declaredRoot) {
 		throw new UnsafePathError(`safe_rm_rf: refusing path outside allowlist: ${target}`);
 	}
 }

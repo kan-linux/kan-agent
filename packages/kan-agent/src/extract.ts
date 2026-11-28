@@ -10,18 +10,22 @@
  */
 
 import { execFile } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { CatalogEntry } from "./catalog.ts";
 
 const run = promisify(execFile);
 
-export type ExtractOutcome = { kind: "ok"; contentDir: string; notes: string[] } | { kind: "error"; reason: string };
+export type ExtractOutcome =
+	| { kind: "ok"; contentDir: string; notes: string[]; version?: string }
+	| { kind: "error"; reason: string };
 
 /**
  * Extract `artifact` into `staging` according to the entry's extract spec and fixups. On success
- * `contentDir` holds the tool tree: its contents are what become the store entry.
+ * `contentDir` holds the tool tree: its contents are what become the store entry. `version` is the
+ * package version the artifact itself declares, when its format carries one — a rolling download
+ * link resolves to a filename with no version in it, so the store key must come from the payload.
  */
 export async function extractArtifact(
 	entry: CatalogEntry,
@@ -31,11 +35,23 @@ export async function extractArtifact(
 ): Promise<ExtractOutcome> {
 	const notes: string[] = [];
 	try {
-		const contentDir = await extractByKind(entry, artifact, staging, version, notes);
+		const extracted = await extractByKind(entry, artifact, staging, version, notes);
+		const contentDir = extracted.contentDir;
 		for (const fixup of entry.fixups ?? []) {
-			if (fixup.kind === "rust_std_merge") rustStdMerge(contentDir, notes);
+			switch (fixup.kind) {
+				case "rust_std_merge":
+					rustStdMerge(contentDir, notes);
+					break;
+				case "setuid":
+					// The deb ships chrome-sandbox setuid root and Chrome needs that for its
+					// sandbox; assert the bit regardless of what the artifact or a copy step
+					// preserved on the way.
+					chmodSync(join(contentDir, fixup.path), 0o4755);
+					notes.push(`setuid: ${fixup.path}`);
+					break;
+			}
 		}
-		return { kind: "ok", contentDir, notes };
+		return { kind: "ok", contentDir, notes, version: extracted.version };
 	} catch (e) {
 		return { kind: "error", reason: (e as Error).message };
 	}
@@ -47,20 +63,20 @@ async function extractByKind(
 	staging: string,
 	version: string,
 	notes: string[],
-): Promise<string> {
+): Promise<{ contentDir: string; version?: string }> {
 	const spec = entry.extract;
 	switch (spec.kind) {
 		case "tar_topdir": {
 			await untar(artifact, staging);
 			const top = singleChildDir(staging);
 			if (!top) throw new Error(`${basename(artifact)}: expected a single top-level directory`);
-			return top;
+			return { contentDir: top };
 		}
 		case "tar_strip": {
 			const contentDir = join(staging, "content");
 			mkdirSync(contentDir, { recursive: true });
 			await untar(artifact, contentDir, ["--strip-components=1"]);
-			return contentDir;
+			return { contentDir };
 		}
 		case "tar_subdir": {
 			const work = join(staging, "work");
@@ -71,8 +87,8 @@ async function extractByKind(
 				throw new Error(`${basename(artifact)}: layout unexpected, no ${spec.subdir} under the extracted tree`);
 			}
 			const contentDir = join(staging, "content");
-			cpSync(subdir, contentDir, { recursive: true });
-			return contentDir;
+			cpSync(subdir, contentDir, { recursive: true, verbatimSymlinks: true });
+			return { contentDir };
 		}
 		case "tar_single_file": {
 			const work = join(staging, "work");
@@ -84,7 +100,7 @@ async function extractByKind(
 			const target = join(contentDir, spec.target);
 			mkdirSync(dirname(target), { recursive: true });
 			renameSync(file, target);
-			return contentDir;
+			return { contentDir };
 		}
 		case "zip_topdir": {
 			await assertSafeZipArchive(artifact);
@@ -97,7 +113,7 @@ async function extractByKind(
 			}
 			const top = singleChildDir(work);
 			if (!top) throw new Error(`${basename(artifact)}: expected a single top-level directory`);
-			return top;
+			return { contentDir: top };
 		}
 		case "appimage": {
 			const work = join(staging, "work");
@@ -113,17 +129,68 @@ async function extractByKind(
 			const tree = matchGlobDirs(squashfs, spec.tree_glob);
 			if (!tree) throw new Error(`${basename(artifact)}: no ${spec.tree_glob} under squashfs-root`);
 			const contentDir = join(staging, "content");
-			cpSync(tree, contentDir, { recursive: true });
+			cpSync(tree, contentDir, { recursive: true, verbatimSymlinks: true });
 			const usr = join(squashfs, spec.usr_dir);
 			if (existsSync(usr)) {
 				// Keep the AppImage's /usr payload inside the tree so the deploy profile can place
 				// it (desktop entries, icons, mime data) without re-reading the artifact.
-				cpSync(usr, join(contentDir, spec.usr_dir), { recursive: true });
+				cpSync(usr, join(contentDir, spec.usr_dir), { recursive: true, verbatimSymlinks: true });
 				notes.push(`${spec.usr_dir}/ payload kept in the tree for deploy-profile placement`);
 			}
-			return contentDir;
+			return { contentDir };
+		}
+		case "deb": {
+			// A .deb is an ar archive (debian-binary, control.tar.*, data.tar.*); unpack it
+			// with ar + tar, the way install-prebuilts.sh handles a .deb payload.
+			const work = join(staging, "work");
+			mkdirSync(work, { recursive: true });
+			try {
+				await run("ar", ["x", artifact], { cwd: work });
+			} catch (e) {
+				throw new Error(`could not unpack ${basename(artifact)}: ${(e as Error).message}`);
+			}
+			const members = readdirSync(work);
+			const dataTar = members.find((n) => n.startsWith("data.tar."));
+			if (!dataTar) throw new Error(`${basename(artifact)}: no data.tar.* member`);
+			await untar(join(work, dataTar), work);
+			const tree = matchGlobDirs(work, spec.tree_glob);
+			if (!tree) throw new Error(`${basename(artifact)}: no ${spec.tree_glob} under the extracted tree`);
+			const contentDir = join(staging, "content");
+			cpSync(tree, contentDir, { recursive: true, verbatimSymlinks: true });
+			const usr = join(work, spec.usr_dir);
+			if (existsSync(usr)) {
+				// Keep the .deb's /usr payload inside the tree so the deploy profile can place
+				// it (launcher symlink, desktop entries) without re-reading the artifact.
+				cpSync(usr, join(contentDir, spec.usr_dir), { recursive: true, verbatimSymlinks: true });
+				notes.push(`${spec.usr_dir}/ payload kept in the tree for deploy-profile placement`);
+			}
+			// The control metadata declares the real package version; it keys the store entry so
+			// successive deploys of a rolling download link keep their own trees.
+			const controlTar = members.find((n) => n.startsWith("control.tar."));
+			let debVersion: string | undefined;
+			if (controlTar) {
+				await untar(join(work, controlTar), work);
+				debVersion = readDebVersion(join(work, "control"));
+			}
+			return { contentDir, version: debVersion };
 		}
 	}
+}
+
+/**
+ * The `Version:` field of an extracted .deb control file. Artifact bytes are a trust boundary and
+ * the version becomes a store path segment, so only a Debian version string is accepted — never a
+ * path separator or a parent segment.
+ */
+function readDebVersion(controlFile: string): string | undefined {
+	if (!existsSync(controlFile)) return undefined;
+	const match = /^Version: (.+)$/m.exec(readFileSync(controlFile, "utf8"));
+	if (!match) return undefined;
+	const version = match[1].trim();
+	if (!/^\d[A-Za-z0-9.+:~_-]*$/.test(version)) {
+		throw new Error(`unsafe version string in deb control metadata: ${version}`);
+	}
+	return version;
 }
 
 async function untar(artifact: string, dest: string, extra: string[] = []): Promise<void> {
@@ -247,7 +314,7 @@ function rustStdMerge(contentDir: string, notes: string[]): void {
 			const sysroot = join(contentDir, "rustc", "lib", "rustlib", triple.name, "lib");
 			if (existsSync(sysroot)) continue;
 			mkdirSync(dirname(sysroot), { recursive: true });
-			cpSync(stdLib, sysroot, { recursive: true });
+			cpSync(stdLib, sysroot, { recursive: true, verbatimSymlinks: true });
 			notes.push(`rust_std_merge: ${entry.name}/lib/rustlib/${triple.name}/lib -> rustc sysroot`);
 		}
 	}

@@ -5,13 +5,23 @@
  * /etc/ld.so.conf.d, /usr/local/bin and /usr/share writes of install-prebuilts.sh revertible.
  */
 
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readFileSync,
+	readlinkSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type CatalogEntry, ComponentCatalog } from "../src/catalog.ts";
 import { atomicDeployBinary, systemRollback } from "../src/deploy.ts";
 import { KanPaths } from "../src/root.ts";
-import { makeFakeTarball, makeStagingRoot, removeStagingRoot } from "./fixture.ts";
+import { GenerationStore } from "../src/store.ts";
+import { makeFakeDeb, makeFakeTarball, makeStagingRoot, removeStagingRoot } from "./fixture.ts";
 
 const base = join(import.meta.dirname, ".tmp");
 
@@ -87,9 +97,9 @@ describe("deploy profile placement", () => {
 		// The launcher symlink points at the install root (itself a symlink into the store), so
 		// one flip retargets the whole chain.
 		expect(readlinkSync(join(root, "/usr/local/bin/profiled"))).toBe(
-			join(paths.installRoot("profiled"), "bin", "profiled"),
+			join(paths.installRoot("/opt/profiled"), "bin", "profiled"),
 		);
-		expect(readlinkSync(paths.installRoot("profiled"))).toContain("store");
+		expect(readlinkSync(paths.installRoot("/opt/profiled"))).toContain("store");
 	});
 
 	it("appends the vm block to in-tree prefs only on a VM", async () => {
@@ -161,7 +171,7 @@ describe("config rollback", () => {
 		expect(rolled.kind).toBe("ok");
 		// Undoing gen 2 restores its pre-image, which is gen 1's file content.
 		expect(readFileSync(join(root, "/etc/profile.d/profiled.sh"), "utf8")).toBe("export PROFILED=1\n");
-		expect(readlinkSync(paths.installRoot("profiled"))).toContain("1.0");
+		expect(readlinkSync(paths.installRoot("/opt/profiled"))).toContain("1.0");
 	});
 
 	it("leaves gen 1's writes in place when the failed gen 2 is rolled back", async () => {
@@ -190,14 +200,14 @@ describe("config rollback", () => {
 		// Only the failed deploy's writes are reversed: gen 1's profile text stays, not the
 		// user's pre-gen-1 content.
 		expect(readFileSync(join(root, "/etc/profile.d/profiled.sh"), "utf8")).toBe("export PROFILED=1\n");
-		expect(readlinkSync(paths.installRoot("profiled"))).toContain("1.0");
+		expect(readlinkSync(paths.installRoot("/opt/profiled"))).toContain("1.0");
 	});
 });
 
 describe("legacy install root adoption", () => {
 	it("replaces a real /opt/<tool> directory left by install-prebuilts.sh", async () => {
 		const catalog = catalogWith(profileEntry());
-		const legacy = paths.installRoot("profiled");
+		const legacy = paths.installRoot("/opt/profiled");
 		mkdirSync(join(legacy, "bin"), { recursive: true });
 		writeFileSync(join(legacy, "bin", "profiled"), "old script install", "utf8");
 
@@ -275,5 +285,151 @@ describe("delete_matching and copy_tree", () => {
 		expect(outcome.kind).toBe("ok");
 		expect(readFileSync(join(root, "/usr/share/applications/keep.desktop"), "utf8")).toBe("keep\n");
 		expect(existsSync(join(root, "/usr/share/applications/libreoffice-x-draw.desktop"))).toBe(false);
+	});
+});
+
+describe("vendor-nested install root (chrome layout)", () => {
+	/** chrome's shape: a .deb payload, a /opt/<vendor>/<tool> root, a usr placement profile. */
+	function chromeEntry(): CatalogEntry {
+		return {
+			name: "chrome",
+			description: "chrome layout fixture",
+			source_type: "binary",
+			origin: "official",
+			image_class: "optional",
+			tarball_pattern: "google-chrome-stable_current_amd64.deb",
+			url_pattern: "https://dl.google.com/linux/direct/{tarball}",
+			versions: ["current"],
+			default_version: "current",
+			install_root: "/opt/google/chrome",
+			extract_root: "/opt/google/chrome",
+			extract: { kind: "deb", tree_glob: "opt/google/chrome", usr_dir: "usr" },
+			fixups: [{ kind: "setuid", path: "chrome-sandbox" }],
+			verify_cmd: "chrome --version",
+			config_placement: ["fixture"],
+			deploy_profile: {
+				in_tree: [],
+				system: [
+					{ kind: "copy_tree", from: "usr", to: "/usr" },
+					{
+						kind: "symlink",
+						from: "product_logo_256.png",
+						to: "/usr/share/icons/hicolor/256x256/apps/google-chrome.png",
+					},
+				],
+			},
+			dependencies: [],
+		};
+	}
+
+	/** A .deb whose payload is the chrome layout; its control metadata declares `version`. */
+	function stageChromeDeb(version: string, report: string): string {
+		return makeFakeDeb(base, {
+			name: `chrome-${version}`,
+			version,
+			files: {
+				"opt/google/chrome/chrome": `#!/bin/sh\necho ${report}\n`,
+				"opt/google/chrome/chrome-sandbox": "sandbox",
+				"opt/google/chrome/google-chrome": "#!/bin/sh\nexec chrome\n",
+				"opt/google/chrome/product_logo_256.png": "png",
+				"usr/share/applications/google-chrome.desktop": "[Desktop Entry]\nIcon=google-chrome\n",
+				"usr/share/man/man1/google-chrome-stable.1.gz": "man",
+			},
+			symlinks: {
+				"usr/bin/google-chrome-stable": "/opt/google/chrome/google-chrome",
+				"usr/share/man/man1/google-chrome.1.gz": "google-chrome-stable.1.gz",
+			},
+			executables: ["opt/google/chrome/chrome"],
+		});
+	}
+
+	it("deploys at the nested root and places the usr payload and menu icon", async () => {
+		const catalog = catalogWith(chromeEntry());
+		const outcome = await atomicDeployBinary(
+			{ component: "chrome", version: "current", artifact: stageChromeDeb("1.0.1", "report-1.0.1") },
+			paths,
+			catalog,
+			{ vm: false },
+		);
+		expect(outcome.kind).toBe("ok");
+		// The health check ran the deployed binary inside the nested install root.
+		expect(outcome.text).toContain("report-1.0.1");
+
+		const installRoot = paths.installRoot("/opt/google/chrome");
+		expect(readlinkSync(installRoot)).toContain("store/chrome/1.0.1");
+		// The deb's launcher symlink survives the copy as a symlink (its absolute target is
+		// what the launcher script resolves through).
+		expect(lstatSync(join(root, "/usr/bin/google-chrome-stable")).isSymbolicLink()).toBe(true);
+		expect(readlinkSync(join(root, "/usr/bin/google-chrome-stable"))).toBe("/opt/google/chrome/google-chrome");
+		// The menu icon is a symlink into the install root, so one flip retargets it too.
+		expect(readlinkSync(join(root, "/usr/share/icons/hicolor/256x256/apps/google-chrome.png"))).toBe(
+			join(installRoot, "product_logo_256.png"),
+		);
+		// The store's read-only pass strips write bits but must keep the sandbox's setuid bit.
+		expect(statSync(join(paths.storePath("chrome", "1.0.1"), "chrome-sandbox")).mode & 0o4000).toBe(0o4000);
+	});
+
+	it("replaces a real nested directory left by an earlier script install", async () => {
+		const catalog = catalogWith(chromeEntry());
+		const legacy = paths.installRoot("/opt/google/chrome");
+		mkdirSync(legacy, { recursive: true });
+		writeFileSync(join(legacy, "chrome"), "old script install", "utf8");
+
+		const outcome = await atomicDeployBinary(
+			{ component: "chrome", version: "current", artifact: stageChromeDeb("1.0.1", "report-1.0.1") },
+			paths,
+			catalog,
+			{ vm: false },
+		);
+		expect(outcome.kind).toBe("ok");
+		expect(readlinkSync(legacy)).toContain("store");
+		expect(readFileSync(join(legacy, "chrome"), "utf8")).toContain("report-1.0.1");
+	});
+
+	it("keys the store by the package's own version so a rollback reaches the tree its record names", async () => {
+		const catalog = catalogWith(chromeEntry());
+		// Two deploys of the same rolling artifact name ("current") with different payloads.
+		await atomicDeployBinary(
+			{ component: "chrome", version: "current", artifact: stageChromeDeb("1.0.1", "one") },
+			paths,
+			catalog,
+			{ vm: false },
+		);
+		await atomicDeployBinary(
+			{ component: "chrome", version: "current", artifact: stageChromeDeb("1.0.2", "two") },
+			paths,
+			catalog,
+			{ vm: false },
+		);
+		expect(new GenerationStore(paths).current("chrome")?.version).toBe("1.0.2");
+
+		const rolled = await systemRollback({ component: "chrome", generation: "1" }, paths, catalog);
+		expect(rolled.kind).toBe("ok");
+		expect(readlinkSync(paths.installRoot("/opt/google/chrome"))).toContain("store/chrome/1.0.1");
+	});
+
+	it("keeps relative payload symlinks verbatim across a same-version redeploy", async () => {
+		const catalog = catalogWith(chromeEntry());
+		const artifact = stageChromeDeb("1.0.1", "report-1.0.1");
+		const manLink = join(root, "/usr/share/man/man1/google-chrome.1.gz");
+		// A file this payload does not own: the placement must leave it alone.
+		mkdirSync(join(root, "/usr/share/unrelated"), { recursive: true });
+		writeFileSync(join(root, "/usr/share/unrelated/keep.txt"), "mine\n", "utf8");
+		chmodSync(join(root, "/usr/share/unrelated/keep.txt"), 0o444);
+
+		// The second deploy replaces the same store entry and meets the first deploy's
+		// placements as stale entries — including a relative link that must not have been
+		// rewritten into a link at the (gone) staging tree.
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const outcome = await atomicDeployBinary(
+				{ component: "chrome", version: "current", artifact },
+				paths,
+				catalog,
+				{ vm: false },
+			);
+			expect(outcome.kind).toBe("ok");
+		}
+		expect(readlinkSync(manLink)).toBe("google-chrome-stable.1.gz");
+		expect(statSync(join(root, "/usr/share/unrelated/keep.txt")).mode & 0o777).toBe(0o444);
 	});
 });

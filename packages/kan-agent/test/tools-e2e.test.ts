@@ -158,7 +158,7 @@ describe("binary install pipeline", () => {
 		expect(deployed.kind).toBe("ok");
 		// The health check must have run the DEPLOYED binary, not any host one.
 		expect(deployed.text).toContain("content-of-1.0.0");
-		expect(readlinkSync(paths.installRoot(COMPONENT))).toContain("1.0.0");
+		expect(readlinkSync(paths.installRoot(`/opt/${COMPONENT}`))).toContain("1.0.0");
 		expect(new GenerationStore(paths).current(COMPONENT)?.generation).toBe(1);
 	});
 
@@ -258,7 +258,7 @@ describe("binary install pipeline", () => {
 		expect(failed.text).toContain("verify");
 		expect(failed.text).toContain("rolled back to generation 1");
 		expect(new GenerationStore(paths).current(COMPONENT)?.generation).toBe(1);
-		expect(readlinkSync(paths.installRoot(COMPONENT))).toContain("1.0.0");
+		expect(readlinkSync(paths.installRoot(`/opt/${COMPONENT}`))).toContain("1.0.0");
 	});
 
 	it("rolls back to a named generation and restores its content", async () => {
@@ -279,7 +279,7 @@ describe("binary install pipeline", () => {
 		const rolled = await systemRollback({ component: COMPONENT, generation: "1" }, paths, catalog);
 		expect(rolled.kind).toBe("ok");
 		expect(new GenerationStore(paths).current(COMPONENT)?.generation).toBe(1);
-		expect(readlinkSync(paths.installRoot(COMPONENT))).toContain("1.0.0");
+		expect(readlinkSync(paths.installRoot(`/opt/${COMPONENT}`))).toContain("1.0.0");
 	});
 
 	it("rejects a rollback to a generation that does not exist", async () => {

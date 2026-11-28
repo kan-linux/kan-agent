@@ -11,8 +11,8 @@
 
 import { execFile, execFileSync } from "node:child_process";
 import {
+	chmodSync,
 	copyFileSync,
-	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -20,6 +20,7 @@ import {
 	readFileSync,
 	readlinkSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -177,8 +178,7 @@ export function writeSystemConfig(entry: CatalogEntry, paths: KanPaths, installR
 					break;
 				}
 				const destDir = rootPath(paths, step.to);
-				mkdirSync(destDir, { recursive: true });
-				cpSync(sourceDir, destDir, { recursive: true, force: true });
+				copyPlacedTree(sourceDir, destDir);
 				notes.push(`system copy_tree: ${step.from} -> ${step.to}`);
 				break;
 			}
@@ -301,6 +301,34 @@ async function runHook(hook: HookName, paths: KanPaths): Promise<string> {
 /** Root-absolute step paths are relative to the target root; install-relative ones are not. */
 function rootPath(paths: KanPaths, path: string): string {
 	return path.startsWith("/") ? join(paths.root, path) : path;
+}
+
+/**
+ * Place a store tree into the live system the way a package install does: directories merge into
+ * their destination (it may hold entries this payload does not own), files and links replace any
+ * stale entry an earlier deploy left there, and symlinks are copied verbatim — a relative link
+ * must stay relative or it points into the throw-away staging tree and dangles the moment that
+ * tree goes away. Every placed file is owner-writable again: the store is read-only by
+ * construction and those modes must not leak into a live copy (read, execute and setuid bits
+ * survive).
+ */
+function copyPlacedTree(sourceDir: string, destDir: string): void {
+	mkdirSync(destDir, { recursive: true });
+	for (const item of readdirSync(sourceDir, { withFileTypes: true })) {
+		const source = join(sourceDir, item.name);
+		const dest = join(destDir, item.name);
+		if (item.isDirectory()) {
+			copyPlacedTree(source, dest);
+			continue;
+		}
+		rmSync(dest, { force: true });
+		if (item.isSymbolicLink()) {
+			symlinkSync(readlinkSync(source), dest);
+			continue;
+		}
+		copyFileSync(source, dest);
+		chmodSync(dest, statSync(source).mode | 0o200);
+	}
 }
 
 /** The pre-image of `path`, captured as an undo entry with a backup file under the state dir. */
