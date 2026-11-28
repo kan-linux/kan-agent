@@ -178,7 +178,7 @@ jobs:
           done
           sha256sum -c SHA256SUMS
 
-      - name: Create draft GitHub Release and upload assets
+      - name: Stage GitHub Release assets and notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -189,6 +189,11 @@ jobs:
             "kan-agent-${VERSION}-linux-x86_64.tar.gz"
             SHA256SUMS
           )
+
+          # Auto-generated release notes: every change since the previous tag
+          # plus the new contributors (what the "Auto-generate release notes"
+          # button produces).
+          generated_notes="$(gh api "repos/${GH_REPO}/releases/generate-notes" -f tag_name="${RELEASE_TAG}" --jq .body 2>/dev/null || true)"
 
           existing_release="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
           if [[ "${existing_release}" == "false" ]]; then
@@ -204,12 +209,27 @@ jobs:
               echo "GitHub Release ${RELEASE_TAG} already carries the package assets; nothing to stage."
               exit 0
             fi
-            gh release upload "${RELEASE_TAG}" "${release_assets[@]}"
-            # Only fill in the notes when the author left them empty; release-page
-            # notes are the author's text and must not be clobbered.
-            if [[ -z "$(gh release view "${RELEASE_TAG}" --json body --jq .body)" ]]; then
-              gh release edit "${RELEASE_TAG}" --notes-file RELEASE_NOTES.md
+          fi
+
+          # Release notes: the author's release-page text when present, else the
+          # install notes - with the generated changelog appended either way.
+          base_notes="$(cat RELEASE_NOTES.md)"
+          if [[ "${existing_release}" == "false" ]]; then
+            author_notes="$(gh release view "${RELEASE_TAG}" --json body --jq .body)"
+            if [[ -n "${author_notes}" ]]; then
+              base_notes="${author_notes}"
             fi
+          fi
+          {
+            printf '%s\n' "${base_notes}"
+            if [[ -n "${generated_notes}" ]]; then
+              printf '\n---\n\n%s\n' "${generated_notes}"
+            fi
+          } > RELEASE_NOTES.final.md
+
+          if [[ "${existing_release}" == "false" ]]; then
+            gh release upload "${RELEASE_TAG}" "${release_assets[@]}"
+            gh release edit "${RELEASE_TAG}" --notes-file RELEASE_NOTES.final.md
           else
             if [[ "${existing_release}" == "true" ]]; then
               gh release delete "${RELEASE_TAG}" --yes
@@ -219,7 +239,7 @@ jobs:
               --verify-tag \
               --draft \
               --title "${RELEASE_TAG}" \
-              --notes-file RELEASE_NOTES.md \
+              --notes-file RELEASE_NOTES.final.md \
               "${release_assets[@]}"
           fi
 
