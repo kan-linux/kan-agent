@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'v*'
+  # A release published from the GitHub Releases page creates its tag without a
+  # git push ("Create tag from target on publish"); this covers that path.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -41,7 +45,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 0
           persist-credentials: false
+
+      # Releases are cut from the default branch only: a tag on a feature branch
+      # must not produce a published package.
+      - name: Check the tag is on the default branch
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" "origin/${{ github.event.repository.default_branch }}"; then
+            echo "::error::${RELEASE_TAG} points at a commit that is not on ${{ github.event.repository.default_branch }}. Only tags on ${{ github.event.repository.default_branch }} are released."
+            exit 1
+          fi
 
       # The release tree assembles llama-server and its runtime libraries from this
       # build output (build.sh's ./ggml-hexagon layout convention).
@@ -172,19 +187,36 @@ jobs:
 
           existing_release="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
           if [[ "${existing_release}" == "false" ]]; then
-            echo "::error::GitHub Release ${RELEASE_TAG} is already published. Refusing to mutate a public release."
-            exit 1
-          fi
-          if [[ "${existing_release}" == "true" ]]; then
-            gh release delete "${RELEASE_TAG}" --yes
-          fi
+            # The release already exists (created together with the tag on the
+            # GitHub Releases page). Attach the package when it has no assets yet;
+            # never replace assets that are already there.
+            existing_asset_names="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort)"
+            if [[ -n "${existing_asset_names}" ]]; then
+              if [[ "${existing_asset_names}" != "$(printf '%s\n' "${release_assets[@]}" | sort)" ]]; then
+                echo "::error::GitHub Release ${RELEASE_TAG} already has other assets. Refusing to replace them."
+                exit 1
+              fi
+              echo "GitHub Release ${RELEASE_TAG} already carries the package assets; nothing to stage."
+              exit 0
+            fi
+            gh release upload "${RELEASE_TAG}" "${release_assets[@]}"
+            # Only fill in the notes when the author left them empty; release-page
+            # notes are the author's text and must not be clobbered.
+            if [[ -z "$(gh release view "${RELEASE_TAG}" --json body --jq .body)" ]]; then
+              gh release edit "${RELEASE_TAG}" --notes-file RELEASE_NOTES.md
+            fi
+          else
+            if [[ "${existing_release}" == "true" ]]; then
+              gh release delete "${RELEASE_TAG}" --yes
+            fi
 
-          gh release create "${RELEASE_TAG}" \
-            --verify-tag \
-            --draft \
-            --title "${RELEASE_TAG}" \
-            --notes-file RELEASE_NOTES.md \
-            "${release_assets[@]}"
+            gh release create "${RELEASE_TAG}" \
+              --verify-tag \
+              --draft \
+              --title "${RELEASE_TAG}" \
+              --notes-file RELEASE_NOTES.md \
+              "${release_assets[@]}"
+          fi
 
           expected_asset_names="$(printf '%s\n' "${release_assets[@]}" | sort)"
           actual_asset_names="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort)"
@@ -216,8 +248,10 @@ jobs:
             exit 1
           fi
           if [[ "${existing_release}" == "false" ]]; then
-            echo "::error::GitHub Release ${RELEASE_TAG} is already published."
-            exit 1
+            # Created and published from the GitHub Releases page: the staging
+            # step attached the package to it, there is nothing left to publish.
+            echo "GitHub Release ${RELEASE_TAG} is already published; the package was attached by the staging step."
+            exit 0
           fi
 
           gh release edit "${RELEASE_TAG}" --draft=false
